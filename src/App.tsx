@@ -751,7 +751,7 @@ function App() {
       ? trimmedName
       : `${trimmedName}.txt`;
 
-    const fullPath = `${newFileParentPath}\\${safeFileName}`;
+    const fullPath = buildFilePath(newFileParentPath, safeFileName);
 
     try {
       await writeTextFile(fullPath, "");
