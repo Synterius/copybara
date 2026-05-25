@@ -1,47 +1,98 @@
 $ErrorActionPreference = "Stop"
 
+$GitHubOwner = "Synterius"
+$GitHubReleaseRepo = "copybara-releases"
+
 $package = Get-Content ".\package.json" -Raw | ConvertFrom-Json
 $version = $package.version
+$tag = "v$version"
 
-$installerName = "Copybara_${version}_x64-setup.exe"
-$installerPath = ".\src-tauri\target\release\bundle\nsis\$installerName"
-$sigPath = "$installerPath.sig"
+$releaseRoot = ".\release-server"
+$releaseFilesDir = "$releaseRoot\releases"
 
-if (!(Test-Path $installerPath)) {
-  throw "Installer not found: $installerPath"
+New-Item -ItemType Directory -Force $releaseFilesDir | Out-Null
+Get-ChildItem $releaseFilesDir -File | Remove-Item -Force
+
+# -----------------------------
+# Windows artifact
+# -----------------------------
+$windowsInstallerName = "Copybara_${version}_x64-setup.exe"
+$windowsInstallerPath = ".\src-tauri\target\release\bundle\nsis\$windowsInstallerName"
+$windowsSigPath = "$windowsInstallerPath.sig"
+
+if (!(Test-Path $windowsInstallerPath)) {
+  throw "Windows installer not found: $windowsInstallerPath"
 }
 
-if (!(Test-Path $sigPath)) {
-  throw "Signature not found: $sigPath"
+if (!(Test-Path $windowsSigPath)) {
+  throw "Windows signature not found: $windowsSigPath"
 }
 
-New-Item -ItemType Directory -Force ".\release-server\releases" | Out-Null
+Copy-Item $windowsInstallerPath "$releaseFilesDir\$windowsInstallerName" -Force
+Copy-Item $windowsSigPath "$releaseFilesDir\$windowsInstallerName.sig" -Force
 
-Copy-Item $installerPath ".\release-server\releases\$installerName" -Force
+$windowsSignature = (Get-Content $windowsSigPath -Raw).Trim()
 
-$signature = (Get-Content $sigPath -Raw).Trim()
+# -----------------------------
+# Linux artifact
+# Expected source:
+# .\linux-release\Copybara_1.0.1_amd64.AppImage
+# .\linux-release\Copybara_1.0.1_amd64.AppImage.sig
+# -----------------------------
+$linuxAppImageName = "Copybara_${version}_amd64.AppImage"
+$linuxAppImagePath = ".\linux-release\$linuxAppImageName"
+$linuxSigPath = "$linuxAppImagePath.sig"
 
+$platforms = @{
+  "windows-x86_64" = @{
+    signature = $windowsSignature
+    url = "https://github.com/$GitHubOwner/$GitHubReleaseRepo/releases/download/$tag/$windowsInstallerName"
+  }
+}
+
+if ((Test-Path $linuxAppImagePath) -and (Test-Path $linuxSigPath)) {
+  Copy-Item $linuxAppImagePath "$releaseFilesDir\$linuxAppImageName" -Force
+  Copy-Item $linuxSigPath "$releaseFilesDir\$linuxAppImageName.sig" -Force
+
+  $linuxSignature = (Get-Content $linuxSigPath -Raw).Trim()
+
+  $platforms["linux-x86_64"] = @{
+    signature = $linuxSignature
+    url = "https://github.com/$GitHubOwner/$GitHubReleaseRepo/releases/download/$tag/$linuxAppImageName"
+  }
+
+  Write-Host "Linux AppImage included: $linuxAppImageName"
+} else {
+  Write-Warning "Linux AppImage not found in .\linux-release. latest.json will include Windows only."
+}
+
+# -----------------------------
+# latest.json
+# -----------------------------
 $latest = @{
   version = $version
-  notes = "Copybara update"
+  notes = "Copybara v$version"
   pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-  platforms = @{
-    "windows-x86_64" = @{
-      signature = $signature
-      url = "https://support.69c.local/copybara/releases/$installerName"
-    }
-  }
+  platforms = $platforms
 }
 
 $json = $latest | ConvertTo-Json -Depth 10
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(
-  (Resolve-Path ".\release-server\latest.json"),
+  (Join-Path (Resolve-Path $releaseRoot) "latest.json"),
   $json,
   $utf8NoBom
 )
 
-Write-Host "Prepared release $version"
-Write-Host "Installer: release-server\releases\$installerName"
-Write-Host "Manifest:  release-server\latest.json"
+Write-Host ""
+Write-Host "Prepared Copybara release $version"
+Write-Host "GitHub tag: $tag"
+Write-Host ""
+Write-Host "Files to upload to GitHub Release:"
+Get-ChildItem $releaseFilesDir | ForEach-Object {
+  Write-Host " - $($_.Name)"
+}
+Write-Host ""
+Write-Host "Manifest:"
+Write-Host " - release-server\latest.json"

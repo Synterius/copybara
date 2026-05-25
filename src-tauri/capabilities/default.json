@@ -7,6 +7,8 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-show",
+    "core:window:allow-set-title",
     "opener:default",
     "fs:allow-read",
     "fs:allow-read-dir",
