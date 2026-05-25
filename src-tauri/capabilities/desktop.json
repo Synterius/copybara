@@ -11,6 +11,6 @@
   "permissions": [
     "window-state:default",
     "updater:default",
-    "process:allow-restart"
+    "process:default"
   ]
 }
