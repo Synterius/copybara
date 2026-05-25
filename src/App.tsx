@@ -1223,6 +1223,7 @@ function App() {
                 handleCreateFile();
               }
             }}
+            sx={{ mt: 1 }}
           />
 
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1.5 }}>
@@ -1260,6 +1261,7 @@ function App() {
             value={newDescription}
             onChange={(event) => setNewDescription(event.target.value)}
             fullWidth
+            sx={{ mt: 1 }}
           />
 
           <TextField
