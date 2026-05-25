@@ -347,7 +347,8 @@ function App() {
 
   // Функція для побудови повного шляху до файлу в робочій папці
   const buildFilePath = (folderPath: string, relativePath: string) => {
-    const separator = folderPath.includes("\\") ? "\\" : "/";
+    const separator =
+      folderPath.includes("\\") && !folderPath.includes("/") ? "\\" : "/";
 
     const cleanFolderPath = folderPath.replace(/[\\/]+$/g, "");
     const cleanRelativePath = relativePath
