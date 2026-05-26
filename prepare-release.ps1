@@ -34,34 +34,33 @@ Copy-Item $windowsSigPath "$releaseFilesDir\$windowsInstallerName.sig" -Force
 $windowsSignature = (Get-Content $windowsSigPath -Raw).Trim()
 
 # -----------------------------
-# Pull Linux artifact from Ubuntu VM
+# Pull Linux DEB artifact from Ubuntu VM
 # -----------------------------
 $UbuntuUser = "copybara"
 $UbuntuHost = "192.168.91.128"
-$UbuntuAppImageDir = "~/Projects/copybara/src-tauri/target/release/bundle/appimage"
+$UbuntuDebDir = "~/Projects/copybara/src-tauri/target/release/bundle/deb"
+$SshKeyPath = "$env:USERPROFILE\.ssh\copybara_release_ed25519"
 
 $linuxReleaseDir = ".\linux-release"
 New-Item -ItemType Directory -Force $linuxReleaseDir | Out-Null
 
-$linuxAppImageName = "Copybara_${version}_amd64.AppImage"
+$linuxDebName = "Copybara_${version}_amd64.deb"
 
 Write-Host ""
-Write-Host "Trying to pull Linux AppImage from Ubuntu VM..."
+Write-Host "Trying to pull Linux DEB from Ubuntu VM..."
 
-$SshKeyPath = "$env:USERPROFILE\.ssh\copybara_release_ed25519"
-
-scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuAppImageDir}/${linuxAppImageName}" "$linuxReleaseDir\"
-scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuAppImageDir}/${linuxAppImageName}.sig" "$linuxReleaseDir\"
+scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuDebDir}/${linuxDebName}" "$linuxReleaseDir\"
+scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuDebDir}/${linuxDebName}.sig" "$linuxReleaseDir\"
 
 # -----------------------------
-# Linux artifact
+# Linux artifact (.deb)
 # Expected source:
-# .\linux-release\Copybara_1.0.1_amd64.AppImage
-# .\linux-release\Copybara_1.0.1_amd64.AppImage.sig
+# .\linux-release\Copybara_1.0.3_amd64.deb
+# .\linux-release\Copybara_1.0.3_amd64.deb.sig
 # -----------------------------
-$linuxAppImageName = "Copybara_${version}_amd64.AppImage"
-$linuxAppImagePath = ".\linux-release\$linuxAppImageName"
-$linuxSigPath = "$linuxAppImagePath.sig"
+$linuxDebName = "Copybara_${version}_amd64.deb"
+$linuxDebPath = ".\linux-release\$linuxDebName"
+$linuxSigPath = "$linuxDebPath.sig"
 
 $platforms = @{
   "windows-x86_64" = @{
@@ -70,20 +69,20 @@ $platforms = @{
   }
 }
 
-if ((Test-Path $linuxAppImagePath) -and (Test-Path $linuxSigPath)) {
-  Copy-Item $linuxAppImagePath "$releaseFilesDir\$linuxAppImageName" -Force
-  Copy-Item $linuxSigPath "$releaseFilesDir\$linuxAppImageName.sig" -Force
+if ((Test-Path $linuxDebPath) -and (Test-Path $linuxSigPath)) {
+  Copy-Item $linuxDebPath "$releaseFilesDir\$linuxDebName" -Force
+  Copy-Item $linuxSigPath "$releaseFilesDir\$linuxDebName.sig" -Force
 
   $linuxSignature = (Get-Content $linuxSigPath -Raw).Trim()
 
   $platforms["linux-x86_64"] = @{
     signature = $linuxSignature
-    url = "https://github.com/$GitHubOwner/$GitHubReleaseRepo/releases/download/$tag/$linuxAppImageName"
+    url = "https://github.com/$GitHubOwner/$GitHubReleaseRepo/releases/download/$tag/$linuxDebName"
   }
 
-  Write-Host "Linux AppImage included: $linuxAppImageName"
+  Write-Host "Linux DEB included: $linuxDebName"
 } else {
-  Write-Warning "Linux AppImage not found in .\linux-release. latest.json will include Windows only."
+  Write-Warning "Linux DEB not found in .\linux-release. latest.json will include Windows only."
 }
 
 # -----------------------------
