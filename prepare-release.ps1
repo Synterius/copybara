@@ -34,6 +34,26 @@ Copy-Item $windowsSigPath "$releaseFilesDir\$windowsInstallerName.sig" -Force
 $windowsSignature = (Get-Content $windowsSigPath -Raw).Trim()
 
 # -----------------------------
+# Pull Linux artifact from Ubuntu VM
+# -----------------------------
+$UbuntuUser = "copybara"
+$UbuntuHost = "192.168.91.128"
+$UbuntuAppImageDir = "~/Projects/copybara/src-tauri/target/release/bundle/appimage"
+
+$linuxReleaseDir = ".\linux-release"
+New-Item -ItemType Directory -Force $linuxReleaseDir | Out-Null
+
+$linuxAppImageName = "Copybara_${version}_amd64.AppImage"
+
+Write-Host ""
+Write-Host "Trying to pull Linux AppImage from Ubuntu VM..."
+
+$SshKeyPath = "$env:USERPROFILE\.ssh\copybara_release_ed25519"
+
+scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuAppImageDir}/${linuxAppImageName}" "$linuxReleaseDir\"
+scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuAppImageDir}/${linuxAppImageName}.sig" "$linuxReleaseDir\"
+
+# -----------------------------
 # Linux artifact
 # Expected source:
 # .\linux-release\Copybara_1.0.1_amd64.AppImage
