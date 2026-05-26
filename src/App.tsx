@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   AppBar,
   Box,
   Card,
   CardContent,
   Chip,
+  CircularProgress,
   CssBaseline,
   Drawer,
   IconButton,
@@ -24,6 +26,10 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
+  Menu,
+  MenuItem,
+
 } from "@mui/material";
 
 // Іконки
@@ -42,17 +48,24 @@ import CloseIcon from "@mui/icons-material/Close";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DeleteIcon from "@mui/icons-material/Delete";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
 import { open } from "@tauri-apps/plugin-dialog";
-import { readDir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { readDir, readTextFile, writeTextFile, remove } from "@tauri-apps/plugin-fs";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
-const drawerWidth = 280;
+const defaultDrawerWidth = 280;
+const minDrawerWidth = 190;
+const hiddenDrawerThreshold = 165;
 
 type Instruction = {
   description: string;
@@ -65,6 +78,12 @@ type WorkspaceNode = {
   path: string;
   children?: WorkspaceNode[];
 };
+
+type TreeContextMenu = {
+  mouseX: number;
+  mouseY: number;
+  node: WorkspaceNode;
+} | null;
 
 const parseInstructions = (content: string): Instruction[] => {
   const blocks = content
@@ -117,9 +136,44 @@ function App() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(
     localStorage.getItem("copybara.workspacePath")
   );
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceNode[]>([]);
   const [workspaceContents, setWorkspaceContents] = useState<Record<string, string>>({});
+  const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenu>(null);
+  const [treePanelWidth, setTreePanelWidth] = useState(() => {
+    const savedWidth = Number(localStorage.getItem("copybara.treePanelWidth"));
+
+    return Number.isFinite(savedWidth) && savedWidth > 0
+      ? savedWidth
+      : defaultDrawerWidth;
+  });
+  const [collapsedFolderPaths, setCollapsedFolderPaths] = useState<Set<string>>(
+    () => {
+      try {
+        const saved = localStorage.getItem("copybara.collapsedFolderPaths");
+
+        if (!saved) {
+          return new Set();
+        }
+
+        const parsed = JSON.parse(saved);
+
+        if (!Array.isArray(parsed)) {
+          return new Set();
+        }
+
+        return new Set(parsed.filter((item) => typeof item === "string"));
+      } catch {
+        return new Set();
+      }
+    }
+  );
+  const [treePanelHidden, setTreePanelHidden] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const resizingTreePanelRef = useRef(false);
+  const [draggedInstructionIndex, setDraggedInstructionIndex] = useState<number | null>(null);
+  const [dragOverInstructionIndex, setDragOverInstructionIndex] = useState<number | null>(null);
 
   const [searchText, setSearchText] = useState("");
   const [replaceFrom, setReplaceFrom] = useState("");
@@ -139,6 +193,8 @@ function App() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
+  const [deleteFileDialogOpen, setDeleteFileDialogOpen] = useState(false);
+  const [fileToDelete, setFileToDelete] = useState<WorkspaceNode | null>(null);
 
   const [availableUpdateVersion, setAvailableUpdateVersion] = useState<string | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
@@ -150,6 +206,7 @@ function App() {
   const [createFileDialogOpen, setCreateFileDialogOpen] = useState(false);
   const [newFileName, setNewFileName] = useState("");
   const [newFileParentPath, setNewFileParentPath] = useState<string | null>(null);
+  const [newFileParentRelativePath, setNewFileParentRelativePath] = useState("");
 
   const instructions = selectedFileName
     ? parseInstructions(workspaceContents[selectedFileName] ?? "")
@@ -165,6 +222,12 @@ function App() {
         item.command.toLowerCase().includes(query)
       );
     });
+
+  const maxTreePanelWidth = Math.floor(windowWidth * 0.6);
+  const visibleTreePanelWidth = Math.min(
+    Math.max(treePanelWidth, minDrawerWidth),
+    maxTreePanelWidth
+  );
 
   useEffect(() => {
     const loadAppVersion = async () => {
@@ -190,6 +253,12 @@ function App() {
             paper: darkMode ? "#2b2b2b" : "#ffffff",
           },
         },
+        typography: {
+          fontSize: 13,
+          h5: { fontSize: "1.25rem" },
+          h6: { fontSize: "1.05rem" },
+          button: { textTransform: "none" },
+        },
         shape: {
           borderRadius: 12,
         },
@@ -198,6 +267,10 @@ function App() {
             styleOverrides: {
               "*": {
                 scrollbarWidth: "thin",
+                boxSizing: "border-box",
+              },
+              body: {
+                fontSize: "0.92rem",
                 scrollbarColor: darkMode
                   ? "#5a5a5a #1f1f1f"
                   : "#bdbdbd #f5f5f5",
@@ -258,6 +331,60 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    const maxWidth = Math.floor(windowWidth * 0.6);
+
+    if (treePanelWidth > maxWidth) {
+      setTreePanelWidth(maxWidth);
+      localStorage.setItem("copybara.treePanelWidth", String(maxWidth));
+    }
+  }, [treePanelWidth, windowWidth]);
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!resizingTreePanelRef.current) {
+        return;
+      }
+
+      const nextWidth = Math.min(event.clientX, maxTreePanelWidth);
+
+      if (nextWidth <= hiddenDrawerThreshold) {
+        setTreePanelHidden(true);
+        return;
+      }
+
+      setTreePanelHidden(false);
+      setTreePanelWidth(Math.max(nextWidth, minDrawerWidth));
+    };
+
+    const handleMouseUp = () => {
+      if (!resizingTreePanelRef.current) {
+        return;
+      }
+
+      resizingTreePanelRef.current = false;
+      localStorage.setItem("copybara.treePanelWidth", String(visibleTreePanelWidth));
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [maxTreePanelWidth, visibleTreePanelWidth]);
+
+  useEffect(() => {
     const handleGlobalShortcuts = (event: KeyboardEvent) => {
       const isCtrl = event.ctrlKey || event.metaKey;
 
@@ -313,6 +440,7 @@ function App() {
     newDescription,
     newFileName,
     newFileParentPath,
+    newFileParentRelativePath,
   ]);
 
   // --- Функції --- //
@@ -327,22 +455,63 @@ function App() {
     setDeleteIndex(null);
   };
 
-  // Функція для перечитування поточного файлу (наприклад, після зовнішніх змін)
-  const reloadCurrentFile = async () => {
-    if (!workspacePath || !selectedFileName) {
+  const openDeleteFileDialog = (node: WorkspaceNode) => {
+    setFileToDelete(node);
+    setDeleteFileDialogOpen(true);
+    closeTreeContextMenu();
+  };
+
+  const closeDeleteFileDialog = () => {
+    setDeleteFileDialogOpen(false);
+    setFileToDelete(null);
+  };
+
+  // Функція для перечитування файлу (наприклад, після зовнішніх змін)
+  const reloadFile = async (filePath: string) => {
+    if (!workspacePath || !filePath) {
       return;
     }
 
-    const content = await readTextFile(buildFilePath(workspacePath, selectedFileName));
+    try {
+      const content = await readTextFile(buildFilePath(workspacePath, filePath));
 
-    setWorkspaceContents((current) => ({
-      ...current,
-      [selectedFileName]: content,
-    }));
+      setWorkspaceContents((current) => ({
+        ...current,
+        [filePath]: content,
+      }));
 
-    setSearchText("");
-    cancelEditingInstruction();
-    showSnackbar("Файл перечитано");
+      if (filePath === selectedFileName) {
+        setSearchText("");
+        cancelEditingInstruction();
+      }
+
+      showSnackbar("Файл перечитано");
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося перечитати файл");
+    }
+  };
+
+  const reloadCurrentFile = async () => {
+    if (!selectedFileName) {
+      return;
+    }
+
+    await reloadFile(selectedFileName);
+  };
+
+  const reloadWorkspaceDirectory = async () => {
+    if (!workspacePath) {
+      return;
+    }
+
+    try {
+      await loadWorkspaceFolder(workspacePath);
+      showSnackbar("Директорію перечитано");
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося перечитати директорію");
+    }
   };
 
   // Функція для побудови повного шляху до файлу в робочій папці
@@ -359,98 +528,104 @@ function App() {
   };
 
   const loadWorkspaceFolder = async (folderPath: string) => {
-    const readFolderTree = async (
-      currentFolderPath: string,
-      relativePrefix = ""
-    ): Promise<{ nodes: WorkspaceNode[]; files: string[] }> => {
-      const entries = await readDir(currentFolderPath);
+    setWorkspaceLoading(true);
 
-      const results = await Promise.all(
-        entries.map(async (entry) => {
-          const relativePath = relativePrefix
-            ? `${relativePrefix}/${entry.name}`
-            : entry.name;
+    try {
+      const readFolderTree = async (
+        currentFolderPath: string,
+        relativePrefix = ""
+      ): Promise<{ nodes: WorkspaceNode[]; files: string[] }> => {
+        const entries = await readDir(currentFolderPath);
 
-          const fullPath = buildFilePath(folderPath, relativePath);
+        const results = await Promise.all(
+          entries.map(async (entry) => {
+            const relativePath = relativePrefix
+              ? `${relativePrefix}/${entry.name}`
+              : entry.name;
 
-          if (entry.isDirectory) {
-            const nested = await readFolderTree(fullPath, relativePath);
+            const fullPath = buildFilePath(folderPath, relativePath);
 
-            if (nested.nodes.length === 0) {
-              return null;
+            if (entry.isDirectory) {
+              const nested = await readFolderTree(fullPath, relativePath);
+
+              if (nested.nodes.length === 0) {
+                return null;
+              }
+
+              return {
+                node: {
+                  type: "folder" as const,
+                  name: entry.name,
+                  path: relativePath,
+                  children: nested.nodes,
+                },
+                files: nested.files,
+              };
             }
 
-            return {
-              node: {
-                type: "folder" as const,
-                name: entry.name,
-                path: relativePath,
-                children: nested.nodes,
-              },
-              files: nested.files,
-            };
-          }
+            if (entry.isFile && entry.name.toLowerCase().endsWith(".txt")) {
+              return {
+                node: {
+                  type: "file" as const,
+                  name: entry.name,
+                  path: relativePath,
+                },
+                files: [relativePath],
+              };
+            }
 
-          if (entry.isFile && entry.name.toLowerCase().endsWith(".txt")) {
-            return {
-              node: {
-                type: "file" as const,
-                name: entry.name,
-                path: relativePath,
-              },
-              files: [relativePath],
-            };
-          }
+            return null;
+          })
+        );
 
-          return null;
+        const validResults = results.filter((item) => item !== null) as {
+          node: WorkspaceNode;
+          files: string[];
+        }[];
+
+        const nodes = validResults
+          .map((item) => item.node)
+          .sort((a, b) => {
+            if (a.type !== b.type) {
+              return a.type === "folder" ? -1 : 1;
+            }
+
+            return a.name.localeCompare(b.name);
+          });
+
+        const files = validResults.flatMap((item) => item.files);
+
+        return { nodes, files };
+      };
+
+      const { nodes, files } = await readFolderTree(folderPath);
+
+      const contentsEntries = await Promise.all(
+        files.map(async (filePath) => {
+          const content = await readTextFile(buildFilePath(folderPath, filePath));
+          return [filePath, content] as const;
         })
       );
 
-      const validResults = results.filter((item) => item !== null) as {
-        node: WorkspaceNode;
-        files: string[];
-      }[];
+      setWorkspaceTree(nodes);
+      setWorkspaceFiles(files);
+      setWorkspaceContents(Object.fromEntries(contentsEntries));
 
-      const nodes = validResults
-        .map((item) => item.node)
-        .sort((a, b) => {
-          if (a.type !== b.type) {
-            return a.type === "folder" ? -1 : 1;
-          }
+      const firstFile = files[0];
 
-          return a.name.localeCompare(b.name);
-        });
+      if (firstFile) {
+        setSelectedFileName((current) =>
+          current && files.includes(current) ? current : firstFile
+        );
+      } else {
+        setSelectedFileName("");
+      }
 
-      const files = validResults.flatMap((item) => item.files);
-
-      return { nodes, files };
-    };
-
-    const { nodes, files } = await readFolderTree(folderPath);
-
-    const contentsEntries = await Promise.all(
-      files.map(async (filePath) => {
-        const content = await readTextFile(buildFilePath(folderPath, filePath));
-        return [filePath, content] as const;
-      })
-    );
-
-    setWorkspaceTree(nodes);
-    setWorkspaceFiles(files);
-    setWorkspaceContents(Object.fromEntries(contentsEntries));
-
-    const firstFile = files[0];
-
-    if (firstFile) {
-      setSelectedFileName((current) =>
-        current && files.includes(current) ? current : firstFile
-      );
-    } else {
-      setSelectedFileName("");
+      setSearchText("");
+      cancelEditingInstruction();
+    } finally {
+      setWorkspaceLoading(false);
     }
-
-    setSearchText("");
-    cancelEditingInstruction();
   };
 
   const applyReplacement = (text: string) => {
@@ -489,6 +664,16 @@ function App() {
       </span>
     ));
   };
+
+  const serializeInstructions = (items: Instruction[]) =>
+    items
+      .map((item) => {
+        const command = item.command.trimEnd();
+        const description = item.description.trim();
+
+        return description ? `// ${description}\n${command}` : command;
+      })
+      .join("\n\n") + (items.length > 0 ? "\n" : "");
 
   // Функція для відкриття діалогу вибору папки та завантаження вибраної папки як робочої
   const openWorkspaceFolder = async () => {
@@ -537,14 +722,7 @@ function App() {
         : item
     );
 
-    const updatedContent =
-      updatedInstructions
-        .map((item) =>
-          item.description.trim()
-            ? `// ${item.description.trim()}\n${item.command}`
-            : item.command
-        )
-        .join("\n\n") + "\n";
+    const updatedContent = serializeInstructions(updatedInstructions);
 
     await writeTextFile(
       buildFilePath(workspacePath, selectedFileName),
@@ -615,15 +793,7 @@ function App() {
 
     const nextInstructions = instructions.filter((_, index) => index !== deleteIndex);
 
-    const nextContent =
-      nextInstructions
-        .map((item) => {
-          const command = item.command.trimEnd();
-          const description = item.description.trim();
-
-          return description ? `// ${description}\n${command}` : command;
-        })
-        .join("\n\n") + (nextInstructions.length > 0 ? "\n" : "");
+    const nextContent = serializeInstructions(nextInstructions);
 
     const selectedFilePath = buildFilePath(workspacePath, selectedFileName);
 
@@ -636,6 +806,100 @@ function App() {
 
     closeDeleteDialog();
     showSnackbar("Команду видалено");
+  };
+
+  const moveInstructionInCurrentFile = async (fromIndex: number, toIndex: number) => {
+    if (!workspacePath || !selectedFileName || fromIndex === toIndex) {
+      return;
+    }
+
+    const currentInstructions = parseInstructions(workspaceContents[selectedFileName] ?? "");
+
+    if (
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= currentInstructions.length ||
+      toIndex >= currentInstructions.length
+    ) {
+      return;
+    }
+
+    const previousContent = workspaceContents[selectedFileName] ?? "";
+    const nextInstructions = [...currentInstructions];
+    const [movedItem] = nextInstructions.splice(fromIndex, 1);
+    nextInstructions.splice(toIndex, 0, movedItem);
+
+    const nextContent = serializeInstructions(nextInstructions);
+
+    setWorkspaceContents((current) => ({
+      ...current,
+      [selectedFileName]: nextContent,
+    }));
+    setSearchText("");
+    cancelEditingInstruction();
+
+    try {
+      await writeTextFile(buildFilePath(workspacePath, selectedFileName), nextContent);
+      showSnackbar("Порядок команд змінено");
+    } catch (error) {
+      console.error(error);
+      setWorkspaceContents((current) => ({
+        ...current,
+        [selectedFileName]: previousContent,
+      }));
+      showSnackbar("Не вдалося зберегти новий порядок");
+    }
+  };
+
+  const openTreeContextMenu = (
+    event: ReactMouseEvent,
+    node: WorkspaceNode
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setTreeContextMenu({
+      mouseX: event.clientX + 2,
+      mouseY: event.clientY - 6,
+      node,
+    });
+  };
+
+  const closeTreeContextMenu = () => {
+    setTreeContextMenu(null);
+  };
+
+  useEffect(() => {
+    if (!treeContextMenu) {
+      return;
+    }
+
+    const handleSecondContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      closeTreeContextMenu();
+    };
+
+    window.addEventListener("contextmenu", handleSecondContextMenu, true);
+
+    return () => {
+      window.removeEventListener("contextmenu", handleSecondContextMenu, true);
+    };
+  }, [treeContextMenu]);
+
+  const handleTreeContextAction = async () => {
+    if (!treeContextMenu) {
+      return;
+    }
+
+    const node = treeContextMenu.node;
+    closeTreeContextMenu();
+
+    if (node.type === "file") {
+      await reloadFile(node.path);
+      return;
+    }
+
+    openCreateFileDialog(node.path);
   };
 
   const checkForUpdates = async () => {
@@ -692,15 +956,38 @@ function App() {
   const renderWorkspaceNodes = (nodes: WorkspaceNode[], level = 0) =>
     nodes.map((node) => {
       if (node.type === "folder") {
+        const isCollapsed = collapsedFolderPaths.has(node.path);
+
         return (
           <Box key={`folder-${node.path}`}>
-            <ListItemButton sx={{ pl: 2 + level * 3 }}>
-              <FolderIcon sx={{ mr: 1.5, color: "primary.main" }} />
+            <ListItemButton
+              onClick={() => toggleFolderCollapsed(node.path)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                openTreeContextMenu(event, node);
+              }}
+              sx={{ pl: 2 + level * 3 }}
+            >
+              {isCollapsed ? (
+                <ChevronRightIcon
+                  fontSize="small"
+                  sx={{ mr: 0.75, color: "text.secondary" }}
+                />
+              ) : (
+                <ExpandMoreIcon
+                  fontSize="small"
+                  sx={{ mr: 0.75, color: "text.secondary" }}
+                />
+              )}
+
+              <FolderIcon sx={{ mr: 1.25, color: "primary.main" }} />
 
               <ListItemText primary={node.name} />
             </ListItemButton>
 
-            {node.children && renderWorkspaceNodes(node.children, level + 1)}
+            {!isCollapsed && node.children && renderWorkspaceNodes(node.children, level + 1)}
           </Box>
         );
       }
@@ -713,9 +1000,10 @@ function App() {
             setSelectedFileName(node.path);
             setSearchText("");
           }}
+          onContextMenu={(event) => openTreeContextMenu(event, node)}
           sx={{ pl: 2 + level * 3 }}
         >
-          <DescriptionIcon sx={{ mr: 1.5 }} />
+          <DescriptionIcon sx={{ mr: 1.25, fontSize: 19 }} />
 
           <ListItemText
             primary={node.name}
@@ -728,8 +1016,18 @@ function App() {
     });
 
 
-  const openCreateFileDialog = (parentPath?: string) => {
-    setNewFileParentPath(parentPath ?? workspacePath ?? null);
+  const openCreateFileDialog = (parentRelativePath = "") => {
+    if (!workspacePath) {
+      showSnackbar("Спочатку виберіть папку для роботи");
+      return;
+    }
+
+    setNewFileParentRelativePath(parentRelativePath);
+    setNewFileParentPath(
+      parentRelativePath
+        ? buildFilePath(workspacePath, parentRelativePath)
+        : workspacePath
+    );
     setNewFileName("");
     setCreateFileDialogOpen(true);
   };
@@ -756,12 +1054,18 @@ function App() {
     try {
       await writeTextFile(fullPath, "");
 
+      const createdRelativePath = newFileParentRelativePath
+        ? `${newFileParentRelativePath}/${safeFileName}`
+        : safeFileName;
+
       setCreateFileDialogOpen(false);
       setNewFileName("");
 
-      await loadWorkspaceFolder(newFileParentPath);
+      if (workspacePath) {
+        await loadWorkspaceFolder(workspacePath);
+      }
 
-      setSelectedFileName(safeFileName);
+      setSelectedFileName(createdRelativePath);
       setSearchText("");
 
       showSnackbar(`Файл "${safeFileName}" створено`);
@@ -771,9 +1075,122 @@ function App() {
     }
   };
 
+  const deleteSelectedFile = async () => {
+    if (!workspacePath || !fileToDelete || fileToDelete.type !== "file") {
+      closeDeleteFileDialog();
+      return;
+    }
+
+    const filePathToDelete = buildFilePath(workspacePath, fileToDelete.path);
+
+    try {
+      await remove(filePathToDelete);
+
+      setWorkspaceContents((current) => {
+        const next = { ...current };
+        delete next[fileToDelete.path];
+        return next;
+      });
+
+      const nextFiles = workspaceFiles.filter((filePath) => filePath !== fileToDelete.path);
+
+      await loadWorkspaceFolder(workspacePath);
+
+      if (selectedFileName === fileToDelete.path) {
+        setSelectedFileName(nextFiles[0] ?? "");
+        setSearchText("");
+        cancelEditingInstruction();
+      }
+
+      showSnackbar(`Файл "${fileToDelete.name}" видалено`);
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося видалити файл");
+    } finally {
+      closeDeleteFileDialog();
+    }
+  };
+
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
     setSnackbarOpen(true);
+  };
+
+  const toggleFolderCollapsed = (folderPath: string) => {
+    setCollapsedFolderPaths((current) => {
+      const next = new Set(current);
+
+      if (next.has(folderPath)) {
+        next.delete(folderPath);
+      } else {
+        next.add(folderPath);
+      }
+
+      localStorage.setItem(
+        "copybara.collapsedFolderPaths",
+        JSON.stringify(Array.from(next))
+      );
+
+      return next;
+    });
+  };
+
+  const getAllFolderPaths = (nodes: WorkspaceNode[]): string[] => {
+    return nodes.flatMap((node) => {
+      if (node.type !== "folder") {
+        return [];
+      }
+
+      return [
+        node.path,
+        ...getAllFolderPaths(node.children ?? []),
+      ];
+    });
+  };
+
+  const collapseAllFolders = () => {
+    const allFolderPaths = getAllFolderPaths(workspaceTree);
+    const next = new Set(allFolderPaths);
+
+    setCollapsedFolderPaths(next);
+
+    localStorage.setItem(
+      "copybara.collapsedFolderPaths",
+      JSON.stringify(Array.from(next))
+    );
+
+    closeTreeContextMenu();
+  };
+
+  const expandAllFolders = () => {
+    const next = new Set<string>();
+
+    setCollapsedFolderPaths(next);
+
+    localStorage.setItem(
+      "copybara.collapsedFolderPaths",
+      JSON.stringify([])
+    );
+
+    closeTreeContextMenu();
+  };
+
+  const handleRevealTreeNode = async () => {
+    if (!workspacePath || !treeContextMenu?.node) {
+      closeTreeContextMenu();
+      return;
+    }
+
+    const targetPath = buildFilePath(workspacePath, treeContextMenu.node.path);
+
+    try {
+      await revealItemInDir(targetPath);
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося показати у провіднику");
+    } finally {
+      closeTreeContextMenu();
+    }
   };
   // --- --- //
 
@@ -782,86 +1199,147 @@ function App() {
       <CssBaseline />
 
       <Box sx={{ display: "flex", height: "100vh" }}>
-        <Drawer
-          variant="permanent"
-          sx={{
-            width: drawerWidth,
-            flexShrink: 0,
-            "& .MuiDrawer-paper": {
-              width: drawerWidth,
-              boxSizing: "border-box",
-            },
-          }}
-        >
-          <Box
+        {!treePanelHidden && (
+          <Drawer
+            variant="permanent"
             sx={{
-              position: "sticky",
-              top: 0,
-              zIndex: 30,
-              px: 2,
-              py: 1.5,
-              backgroundColor: "background.paper",
-              borderBottom: 1,
-              borderColor: "divider",
+              width: visibleTreePanelWidth,
+              flexShrink: 0,
+              "& .MuiDrawer-paper": {
+                width: visibleTreePanelWidth,
+                boxSizing: "border-box",
+                overflowX: "hidden",
+              },
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700, flexGrow: 1 }}>
-                🦫 Copybara{appVersion ? ` v${appVersion}` : ""}
-              </Typography>
-
-              <IconButton
-                size="small"
-                title="Перевірити оновлення"
-                onClick={checkForUpdates}
-              >
-                <Badge
-                  color="warning"
-                  variant="dot"
-                  invisible={!availableUpdateVersion}
-                  overlap="circular"
-                >
-                  <SystemUpdateAltIcon fontSize="small" />
-                </Badge>
-              </IconButton>
-            </Box>
-
-            <Button
-              fullWidth
-              size="small"
-              variant="outlined"
-              color="primary"
-              startIcon={<AddIcon />}
-              disabled={!workspacePath}
-              onClick={() => openCreateFileDialog()}
+            <Box
               sx={{
-                mt: 1.5,
-                justifyContent: "flex-start",
-                textTransform: "none",
+                position: "sticky",
+                top: 0,
+                zIndex: 30,
+                px: 2,
+                py: 1.5,
+                backgroundColor: "background.paper",
+                borderBottom: 1,
+                borderColor: "divider",
               }}
             >
-              Новий файл
-            </Button>
-          </Box>
-
-          <List>
-            {workspaceFiles.length > 0 ? (
-              renderWorkspaceNodes(workspaceTree)
-            ) : (
-              <Box sx={{ px: 2, py: 3 }}>
-                <Typography color="text.secondary" sx={{ mb: 1 }}>
-                  Виберіть папку для роботи
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, flexGrow: 1 }}>
+                  🦫 Copybara{appVersion ? ` v${appVersion}` : ""}
                 </Typography>
 
-                <Typography variant="caption" color="text.secondary">
-                  Тут зʼявляться .txt файли з вибраної папки.
-                </Typography>
+                <IconButton
+                  size="small"
+                  title="Сховати дерево"
+                  onClick={() => setTreePanelHidden(true)}
+                >
+                  <ChevronLeftIcon fontSize="small" />
+                </IconButton>
+
+                <IconButton
+                  size="small"
+                  title="Перевірити оновлення"
+                  onClick={checkForUpdates}
+                >
+                  <Badge
+                    color="warning"
+                    variant="dot"
+                    invisible={!availableUpdateVersion}
+                    overlap="circular"
+                  >
+                    <SystemUpdateAltIcon fontSize="small" />
+                  </Badge>
+                </IconButton>
               </Box>
-            )}
-          </List>
-        </Drawer>
 
-        <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
+              <Box sx={{ display: "flex", gap: 1, mt: 1.5 }}>
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="outlined"
+                  color="primary"
+                  startIcon={<AddIcon />}
+                  disabled={!workspacePath}
+                  onClick={() => openCreateFileDialog()}
+                  sx={{ justifyContent: "flex-start" }}
+                >
+                  Створити файл
+                </Button>
+
+                <IconButton
+                  size="small"
+                  color="primary"
+                  disabled={!workspacePath}
+                  onClick={reloadWorkspaceDirectory}
+                  title="Перечитати директорію"
+                  sx={{
+                    border: "1px solid",
+                    borderColor: "primary.main",
+                    borderRadius: 1.5,
+                  }}
+                >
+                  <RefreshIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            </Box>
+
+            <List onContextMenu={(event) => event.preventDefault()}>
+              {workspaceFiles.length > 0 ? (
+                renderWorkspaceNodes(workspaceTree)
+              ) : (
+                <Box sx={{ px: 2, py: 3 }}>
+                  <Typography color="text.secondary" sx={{ mb: 1 }}>
+                    Виберіть папку для роботи
+                  </Typography>
+
+                  <Typography variant="caption" color="text.secondary">
+                    Тут зʼявляться .txt файли з вибраної папки.
+                  </Typography>
+                </Box>
+              )}
+            </List>
+          </Drawer>
+        )}
+
+        <Box
+          onMouseDown={() => {
+            resizingTreePanelRef.current = true;
+            setTreePanelHidden(false);
+          }}
+          title="Потягніть, щоб змінити ширину дерева"
+          sx={{
+            width: 6,
+            flexShrink: 0,
+            cursor: "col-resize",
+            bgcolor: "divider",
+            opacity: treePanelHidden ? 0.65 : 0.35,
+            "&:hover": { opacity: 0.9 },
+          }}
+        />
+
+        {treePanelHidden && (
+          <IconButton
+            size="small"
+            color="primary"
+            onClick={() => setTreePanelHidden(false)}
+            title="Показати дерево"
+            sx={{
+              position: "fixed",
+              left: 8,
+              top: 45,
+              zIndex: 1300,
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              "&:hover": { bgcolor: "background.paper" },
+            }}
+          >
+            <ChevronRightIcon fontSize="small" />
+          </IconButton>
+        )}
+
+        <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <AppBar position="static" color="transparent" elevation={0}>
             <Toolbar sx={{ gap: 2 }}>
               <Box
@@ -906,7 +1384,21 @@ function App() {
           </AppBar>
 
           <Box sx={{ px: 3, pb: 3, overflow: "auto" }}>
-            {!workspacePath ? (
+            {workspaceLoading ? (
+              <Card sx={{ mt: 3 }}>
+                <CardContent sx={{ textAlign: "center", py: 6 }}>
+                  <CircularProgress color="primary" sx={{ mb: 2 }} />
+
+                  <Typography variant="h5" sx={{ fontWeight: 700, mb: 1 }}>
+                    Завантаження директорії...
+                  </Typography>
+
+                  <Typography color="text.secondary">
+                    Copybara сканує папки та читає .txt файли. Це може зайняти трохи часу.
+                  </Typography>
+                </CardContent>
+              </Card>
+            ) : !workspacePath ? (
               <Card sx={{ mt: 3 }}>
                 <CardContent sx={{ textAlign: "center", py: 6 }}>
                   <Typography variant="h5" sx={{ fontWeight: 700, mb: 1 }}>
@@ -1065,11 +1557,44 @@ function App() {
                   return (
                     <Card
                       key={index}
+                      onDragOver={(event) => {
+                        if (draggedInstructionIndex === null || editingIndex !== null) {
+                          return;
+                        }
+
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        setDragOverInstructionIndex(index);
+                      }}
+                      onDrop={async (event) => {
+                        event.preventDefault();
+
+                        if (
+                          draggedInstructionIndex === null ||
+                          draggedInstructionIndex === index ||
+                          !workspacePath ||
+                          !selectedFileName
+                        ) {
+                          setDraggedInstructionIndex(null);
+                          setDragOverInstructionIndex(null);
+                          return;
+                        }
+
+                        await moveInstructionInCurrentFile(draggedInstructionIndex, index);
+
+                        setDraggedInstructionIndex(null);
+                        setDragOverInstructionIndex(null);
+                      }}
                       sx={{
                         mb: 2,
                         border: "2px solid",
-                        borderColor: hasReplacementMatch ? "primary.main" : "transparent",
-                        boxShadow: hasReplacementMatch ? 6 : undefined,
+                        borderColor:
+                          dragOverInstructionIndex === index
+                            ? "primary.main"
+                            : hasReplacementMatch
+                              ? "primary.main"
+                              : "transparent",
+                        boxShadow: hasReplacementMatch || dragOverInstructionIndex === index ? 6 : undefined,
                       }}
                     >
                       <CardContent>
@@ -1107,7 +1632,7 @@ function App() {
                         <Box
                           sx={{
                             display: "flex",
-                            alignItems: "flex-start",
+                            alignItems: "center",
                             gap: 1,
                             bgcolor:
                               lastCopiedIndex === index
@@ -1124,6 +1649,40 @@ function App() {
                             transition: "background-color 0.2s ease, border-color 0.2s ease",
                           }}
                         >
+                          <IconButton
+                            size="small"
+                            draggable={editingIndex !== index}
+                            onDragStart={(event) => {
+                              if (editingIndex === index) {
+                                event.preventDefault();
+                                return;
+                              }
+
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", String(index));
+                              setDraggedInstructionIndex(index);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedInstructionIndex(null);
+                              setDragOverInstructionIndex(null);
+                            }}
+                            title="Перетягнути команду"
+                            sx={{
+                              cursor: editingIndex === index ? "default" : "grab",
+                              mt: "2px",
+                              color: "text.secondary",
+                              "&:hover": {
+                                color: "primary.main",
+                              },
+                              "&:active": {
+                                cursor: "grabbing",
+                              },
+                            }}
+                            disabled={editingIndex === index}
+                          >
+                            <DragIndicatorIcon fontSize="small" />
+                          </IconButton>
+
                           {editingIndex === index ? (
                             <TextField
                               fullWidth
@@ -1202,6 +1761,67 @@ function App() {
         </Box>
       </Box>
 
+      <Menu
+        open={Boolean(treeContextMenu)}
+        onClose={closeTreeContextMenu}
+        anchorReference="anchorPosition"
+        anchorPosition={
+          treeContextMenu
+            ? { top: treeContextMenu.mouseY, left: treeContextMenu.mouseX }
+            : undefined
+        }
+      >
+        <MenuItem onClick={handleTreeContextAction}>
+          {treeContextMenu?.node.type === "file"
+            ? "Перечитати файл"
+            : "Створити файл у цій папці"}
+        </MenuItem>
+
+        <MenuItem onClick={handleRevealTreeNode}>
+          Показати у провіднику
+        </MenuItem>
+
+        {treeContextMenu?.node.type === "file" && (
+          <MenuItem
+            onClick={() => {
+              if (treeContextMenu?.node.type === "file") {
+                openDeleteFileDialog(treeContextMenu.node);
+              }
+            }}
+            sx={{ color: "error.main" }}
+          >
+            Видалити файл
+          </MenuItem>
+        )}
+
+        <Divider />
+
+        <MenuItem onClick={collapseAllFolders}>
+          Згорнути все
+        </MenuItem>
+
+        <MenuItem onClick={expandAllFolders}>
+          Розгорнути все
+        </MenuItem>
+
+        {treeContextMenu?.node.type === "file" && [
+          <Divider key="divider" />,
+          <MenuItem
+            key="select"
+            onClick={() => {
+              if (treeContextMenu?.node.type === "file") {
+                setSelectedFileName(treeContextMenu.node.path);
+                setSearchText("");
+              }
+
+              closeTreeContextMenu();
+            }}
+          >
+            Відкрити файл
+          </MenuItem>,
+        ]}
+      </Menu>
+
       <Dialog
         open={createFileDialogOpen}
         onClose={() => setCreateFileDialogOpen(false)}
@@ -1227,7 +1847,7 @@ function App() {
           />
 
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1.5 }}>
-            Файл буде створено у вибраній папці. Розширення .txt можна не писати.
+            Файл буде створено {newFileParentRelativePath ? `у папці ${newFileParentRelativePath}` : "у вибраній папці"}. Розширення .txt можна не писати.
           </Typography>
         </DialogContent>
 
@@ -1292,6 +1912,40 @@ function App() {
             onClick={addCommandToCurrentFile}
           >
             Додати
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deleteFileDialogOpen} onClose={closeDeleteFileDialog}>
+        <DialogTitle>Видалити файл?</DialogTitle>
+
+        <DialogContent>
+          <Typography sx={{ mb: 1 }}>
+            Файл буде видалено з диска:
+          </Typography>
+
+          <Typography
+            color="error"
+            sx={{
+              fontFamily: "Consolas, monospace",
+              wordBreak: "break-all",
+            }}
+          >
+            {fileToDelete?.path}
+          </Typography>
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={closeDeleteFileDialog}>
+            Скасувати
+          </Button>
+
+          <Button
+            color="error"
+            variant="contained"
+            onClick={deleteSelectedFile}
+          >
+            Видалити
           </Button>
         </DialogActions>
       </Dialog>
