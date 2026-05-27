@@ -29,7 +29,6 @@ import {
   Divider,
   Menu,
   MenuItem,
-
 } from "@mui/material";
 
 // Іконки
@@ -40,6 +39,7 @@ import DescriptionIcon from "@mui/icons-material/Description";
 import SearchIcon from "@mui/icons-material/Search";
 import ClearIcon from "@mui/icons-material/Clear";
 import FindReplaceIcon from "@mui/icons-material/FindReplace";
+import BrandingWatermarkIcon from "@mui/icons-material/BrandingWatermark";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import FolderIcon from "@mui/icons-material/Folder";
 import AddIcon from "@mui/icons-material/Add";
@@ -64,8 +64,8 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 const defaultDrawerWidth = 280;
-const minDrawerWidth = 190;
-const hiddenDrawerThreshold = 165;
+const minDrawerWidth = 248;
+const hiddenDrawerThreshold = 248;
 
 type Instruction = {
   description: string;
@@ -172,6 +172,7 @@ function App() {
   const [treePanelHidden, setTreePanelHidden] = useState(false);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const resizingTreePanelRef = useRef(false);
+  const [isResizingTreePanel, setIsResizingTreePanel] = useState(false);
   const [draggedInstructionIndex, setDraggedInstructionIndex] = useState<number | null>(null);
   const [dragOverInstructionIndex, setDragOverInstructionIndex] = useState<number | null>(null);
 
@@ -182,6 +183,9 @@ function App() {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [lastCopiedIndex, setLastCopiedIndex] = useState<number | null>(null);
+  const [minimizeAfterCopy, setMinimizeAfterCopy] = useState(() => {
+    return localStorage.getItem("copybara.minimizeAfterCopy") === "true";
+  });
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newDescription, setNewDescription] = useState("");
@@ -341,6 +345,18 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const preventDefaultContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
+    window.addEventListener("contextmenu", preventDefaultContextMenu);
+
+    return () => {
+      window.removeEventListener("contextmenu", preventDefaultContextMenu);
+    };
+  }, []);
+
+  useEffect(() => {
     const maxWidth = Math.floor(windowWidth * 0.6);
 
     if (treePanelWidth > maxWidth) {
@@ -372,6 +388,7 @@ function App() {
       }
 
       resizingTreePanelRef.current = false;
+      setIsResizingTreePanel(false);
       localStorage.setItem("copybara.treePanelWidth", String(visibleTreePanelWidth));
     };
 
@@ -783,6 +800,10 @@ function App() {
 
     setLastCopiedIndex(index);
     showSnackbar("Команду скопійовано");
+
+    if (minimizeAfterCopy) {
+      await getCurrentWindow().minimize();
+    }
   };
 
   const deleteInstructionFromCurrentFile = async () => {
@@ -999,6 +1020,7 @@ function App() {
           onClick={() => {
             setSelectedFileName(node.path);
             setSearchText("");
+            setLastCopiedIndex(null);
           }}
           onContextMenu={(event) => openTreeContextMenu(event, node)}
           sx={{ pl: 2 + level * 3 }}
@@ -1116,6 +1138,11 @@ function App() {
     setSnackbarOpen(true);
   };
 
+  const toggleMinimizeAfterCopy = (checked: boolean) => {
+    setMinimizeAfterCopy(checked);
+    localStorage.setItem("copybara.minimizeAfterCopy", String(checked));
+  };
+
   const toggleFolderCollapsed = (folderPath: string) => {
     setCollapsedFolderPaths((current) => {
       const next = new Set(current);
@@ -1198,7 +1225,13 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
 
-      <Box sx={{ display: "flex", height: "100vh" }}>
+      <Box
+        sx={{
+          display: "flex",
+          height: "100vh",
+          userSelect: isResizingTreePanel ? "none" : "auto",
+        }}
+      >
         {!treePanelHidden && (
           <Drawer
             variant="permanent"
@@ -1253,16 +1286,26 @@ function App() {
                 </IconButton>
               </Box>
 
-              <Box sx={{ display: "flex", gap: 1, mt: 1.5 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  gap: 1,
+                  mt: 1.5,
+                  maxWidth: 230,
+                }}
+              >
                 <Button
-                  fullWidth
                   size="small"
                   variant="outlined"
                   color="primary"
                   startIcon={<AddIcon />}
                   disabled={!workspacePath}
                   onClick={() => openCreateFileDialog()}
-                  sx={{ justifyContent: "flex-start" }}
+                  sx={{
+                    justifyContent: "flex-start",
+                    width: 180,
+                    flexShrink: 0,
+                  }}
                 >
                   Створити файл
                 </Button>
@@ -1305,6 +1348,7 @@ function App() {
         <Box
           onMouseDown={() => {
             resizingTreePanelRef.current = true;
+            setIsResizingTreePanel(true);
             setTreePanelHidden(false);
           }}
           title="Потягніть, щоб змінити ширину дерева"
@@ -1492,6 +1536,19 @@ function App() {
                       disabled={!workspacePath || !selectedFileName}
                     >
                       <FindReplaceIcon />
+                    </IconButton>
+
+                    <IconButton
+                      color={minimizeAfterCopy ? "primary" : "default"}
+                      onClick={() => toggleMinimizeAfterCopy(!minimizeAfterCopy)}
+                      title={
+                        minimizeAfterCopy
+                          ? "Згортання після копіювання увімкнено"
+                          : "Згортати після копіювання"
+                      }
+                      disabled={!workspacePath || !selectedFileName}
+                    >
+                      <BrandingWatermarkIcon />
                     </IconButton>
 
                   </Box>
@@ -1812,6 +1869,7 @@ function App() {
               if (treeContextMenu?.node.type === "file") {
                 setSelectedFileName(treeContextMenu.node.path);
                 setSearchText("");
+                setLastCopiedIndex(null);
               }
 
               closeTreeContextMenu();
