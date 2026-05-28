@@ -40,6 +40,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import ClearIcon from "@mui/icons-material/Clear";
 import FindReplaceIcon from "@mui/icons-material/FindReplace";
 import BrandingWatermarkIcon from "@mui/icons-material/BrandingWatermark";
+import PushPinIcon from "@mui/icons-material/PushPin";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import FolderIcon from "@mui/icons-material/Folder";
 import AddIcon from "@mui/icons-material/Add";
@@ -52,9 +53,14 @@ import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutline";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
+import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 
 import { open } from "@tauri-apps/plugin-dialog";
-import { readDir, readTextFile, writeTextFile, remove } from "@tauri-apps/plugin-fs";
+import { mkdir, readDir, readTextFile, writeTextFile, remove, rename } from "@tauri-apps/plugin-fs";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -186,6 +192,9 @@ function App() {
   const [minimizeAfterCopy, setMinimizeAfterCopy] = useState(() => {
     return localStorage.getItem("copybara.minimizeAfterCopy") === "true";
   });
+  const [alwaysOnTop, setAlwaysOnTop] = useState(() => {
+    return localStorage.getItem("copybara.alwaysOnTop") === "true";
+  });
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newDescription, setNewDescription] = useState("");
@@ -199,6 +208,12 @@ function App() {
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
   const [deleteFileDialogOpen, setDeleteFileDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<WorkspaceNode | null>(null);
+  const [deleteFolderDialogOpen, setDeleteFolderDialogOpen] = useState(false);
+  const [folderToDelete, setFolderToDelete] = useState<WorkspaceNode | null>(null);
+
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [nodeToRename, setNodeToRename] = useState<WorkspaceNode | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const [availableUpdateVersion, setAvailableUpdateVersion] = useState<string | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
@@ -211,6 +226,11 @@ function App() {
   const [newFileName, setNewFileName] = useState("");
   const [newFileParentPath, setNewFileParentPath] = useState<string | null>(null);
   const [newFileParentRelativePath, setNewFileParentRelativePath] = useState("");
+
+  const [createFolderDialogOpen, setCreateFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderParentPath, setNewFolderParentPath] = useState<string | null>(null);
+  const [newFolderParentRelativePath, setNewFolderParentRelativePath] = useState("");
 
   const instructions = selectedFileName
     ? parseInstructions(workspaceContents[selectedFileName] ?? "")
@@ -243,6 +263,13 @@ function App() {
 
     loadAppVersion();
   }, []);
+
+  useEffect(() => {
+    getCurrentWindow().setAlwaysOnTop(alwaysOnTop).catch((error) => {
+      console.error("Failed to set always on top:", error);
+      showSnackbar("Не вдалося змінити режим поверх вікон");
+    });
+  }, [alwaysOnTop]);
 
   const theme = useMemo(
     () =>
@@ -481,6 +508,36 @@ function App() {
   const closeDeleteFileDialog = () => {
     setDeleteFileDialogOpen(false);
     setFileToDelete(null);
+  };
+
+  const openDeleteFolderDialog = (node: WorkspaceNode) => {
+    setFolderToDelete(node);
+    setDeleteFolderDialogOpen(true);
+    closeTreeContextMenu();
+  };
+
+  const closeDeleteFolderDialog = () => {
+    setDeleteFolderDialogOpen(false);
+    setFolderToDelete(null);
+  };
+
+  const openRenameDialog = (node: WorkspaceNode) => {
+    setNodeToRename(node);
+
+    const displayName =
+      node.type === "file" && node.name.toLowerCase().endsWith(".txt")
+        ? node.name.slice(0, -4)
+        : node.name;
+
+    setRenameValue(displayName);
+    setRenameDialogOpen(true);
+    closeTreeContextMenu();
+  };
+
+  const closeRenameDialog = () => {
+    setRenameDialogOpen(false);
+    setNodeToRename(null);
+    setRenameValue("");
   };
 
   // Функція для перечитування файлу (наприклад, після зовнішніх змін)
@@ -1097,6 +1154,67 @@ function App() {
     }
   };
 
+  const openCreateFolderDialog = (parentRelativePath = "") => {
+    if (!workspacePath) {
+      showSnackbar("Спочатку виберіть папку для роботи");
+      return;
+    }
+
+    setNewFolderParentRelativePath(parentRelativePath);
+    setNewFolderParentPath(
+      parentRelativePath
+        ? buildFilePath(workspacePath, parentRelativePath)
+        : workspacePath
+    );
+    setNewFolderName("");
+    setCreateFolderDialogOpen(true);
+    closeTreeContextMenu();
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderParentPath || !workspacePath) {
+      showSnackbar("Спочатку виберіть папку для роботи");
+      return;
+    }
+
+    const trimmedName = newFolderName.trim();
+
+    if (!trimmedName) {
+      showSnackbar("Вкажіть назву папки");
+      return;
+    }
+
+    if (trimmedName.includes("/") || trimmedName.includes("\\")) {
+      showSnackbar("Назва папки не повинна містити / або \\");
+      return;
+    }
+
+    const fullPath = buildFilePath(newFolderParentPath, trimmedName);
+    const initialFilePath = buildFilePath(fullPath, `${trimmedName}.txt`);
+
+    try {
+      await mkdir(fullPath);
+      await writeTextFile(initialFilePath, "");
+
+      const createdFileRelativePath = newFolderParentRelativePath
+        ? `${newFolderParentRelativePath}/${trimmedName}/${trimmedName}.txt`
+        : `${trimmedName}/${trimmedName}.txt`;
+
+      setCreateFolderDialogOpen(false);
+      setNewFolderName("");
+
+      await loadWorkspaceFolder(workspacePath);
+
+      setSelectedFileName(createdFileRelativePath);
+      setSearchText("");
+
+      showSnackbar(`Папку "${trimmedName}" створено`);
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося створити папку");
+    }
+  };
+
   const deleteSelectedFile = async () => {
     if (!workspacePath || !fileToDelete || fileToDelete.type !== "file") {
       closeDeleteFileDialog();
@@ -1133,6 +1251,119 @@ function App() {
     }
   };
 
+  const deleteSelectedFolder = async () => {
+    if (!workspacePath || !folderToDelete || folderToDelete.type !== "folder") {
+      closeDeleteFolderDialog();
+      return;
+    }
+
+    const folderPathToDelete = buildFilePath(workspacePath, folderToDelete.path);
+    const deletedFolderPrefix = `${folderToDelete.path}/`;
+
+    try {
+      await remove(folderPathToDelete, { recursive: true });
+
+      const nextFiles = workspaceFiles.filter(
+        (filePath) => !filePath.startsWith(deletedFolderPrefix)
+      );
+
+      await loadWorkspaceFolder(workspacePath);
+
+      if (
+        selectedFileName &&
+        selectedFileName.startsWith(deletedFolderPrefix)
+      ) {
+        setSelectedFileName(nextFiles[0] ?? "");
+        setSearchText("");
+        setLastCopiedIndex(null);
+        cancelEditingInstruction();
+      }
+
+      showSnackbar(`Папку "${folderToDelete.name}" видалено`);
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося видалити папку");
+    } finally {
+      closeDeleteFolderDialog();
+    }
+  };
+
+  const renameSelectedNode = async () => {
+    if (!workspacePath || !nodeToRename) {
+      closeRenameDialog();
+      return;
+    }
+
+    const trimmedName = renameValue.trim();
+
+    if (!trimmedName) {
+      showSnackbar("Вкажіть нову назву");
+      return;
+    }
+
+    if (trimmedName.includes("/") || trimmedName.includes("\\")) {
+      showSnackbar("Назва не повинна містити / або \\");
+      return;
+    }
+
+    const oldFullPath = buildFilePath(workspacePath, nodeToRename.path);
+
+    const parentRelativePath = nodeToRename.path.includes("/")
+      ? nodeToRename.path.split("/").slice(0, -1).join("/")
+      : "";
+
+    const safeNewName =
+      nodeToRename.type === "file" && !trimmedName.toLowerCase().endsWith(".txt")
+        ? `${trimmedName}.txt`
+        : trimmedName;
+
+    const newRelativePath = parentRelativePath
+      ? `${parentRelativePath}/${safeNewName}`
+      : safeNewName;
+
+    const newFullPath = buildFilePath(workspacePath, newRelativePath);
+
+    try {
+      await rename(oldFullPath, newFullPath);
+
+      await loadWorkspaceFolder(workspacePath);
+
+      if (nodeToRename.type === "file" && selectedFileName === nodeToRename.path) {
+        setSelectedFileName(newRelativePath);
+        setSearchText("");
+        setLastCopiedIndex(null);
+        cancelEditingInstruction();
+      }
+
+      if (
+        nodeToRename.type === "folder" &&
+        selectedFileName &&
+        selectedFileName.startsWith(`${nodeToRename.path}/`)
+      ) {
+        const nextSelectedFileName = selectedFileName.replace(
+          `${nodeToRename.path}/`,
+          `${newRelativePath}/`
+        );
+
+        setSelectedFileName(nextSelectedFileName);
+        setSearchText("");
+        setLastCopiedIndex(null);
+        cancelEditingInstruction();
+      }
+
+      showSnackbar(
+        nodeToRename.type === "file"
+          ? `Файл перейменовано на "${safeNewName}"`
+          : `Папку перейменовано на "${safeNewName}"`
+      );
+
+      closeRenameDialog();
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося перейменувати");
+    }
+  };
+
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
     setSnackbarOpen(true);
@@ -1141,6 +1372,18 @@ function App() {
   const toggleMinimizeAfterCopy = (checked: boolean) => {
     setMinimizeAfterCopy(checked);
     localStorage.setItem("copybara.minimizeAfterCopy", String(checked));
+  };
+
+  const toggleAlwaysOnTop = () => {
+    const nextValue = !alwaysOnTop;
+
+    setAlwaysOnTop(nextValue);
+    localStorage.setItem("copybara.alwaysOnTop", String(nextValue));
+    showSnackbar(
+      nextValue
+        ? "Вікно закріплено поверх інших"
+        : "Закріплення поверх інших вимкнено"
+    );
   };
 
   const toggleFolderCollapsed = (folderPath: string) => {
@@ -1294,21 +1537,59 @@ function App() {
                   maxWidth: 230,
                 }}
               >
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="primary"
-                  startIcon={<AddIcon />}
-                  disabled={!workspacePath}
-                  onClick={() => openCreateFileDialog()}
+                <Box
                   sx={{
-                    justifyContent: "flex-start",
+                    display: "flex",
                     width: 180,
                     flexShrink: 0,
+                    border: "1px solid",
+                    borderColor: workspacePath ? "primary.main" : "action.disabled",
+                    borderRadius: 1.5,
+                    overflow: "hidden",
                   }}
                 >
-                  Створити файл
-                </Button>
+                  <Button
+                    size="small"
+                    color="primary"
+                    disabled={!workspacePath}
+                    startIcon={<AddIcon />}
+                    onClick={() => openCreateFileDialog()}
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      borderRadius: 0,
+                      justifyContent: "center",
+                      px: 1,
+                    }}
+                  >
+                    Файл
+                  </Button>
+
+                  <Divider
+                    orientation="vertical"
+                    flexItem
+                    sx={{
+                      borderColor: workspacePath ? "primary.main" : "action.disabled",
+                    }}
+                  />
+
+                  <Button
+                    size="small"
+                    color="primary"
+                    disabled={!workspacePath}
+                    endIcon={<CreateNewFolderIcon />}
+                    onClick={() => openCreateFolderDialog()}
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      borderRadius: 0,
+                      justifyContent: "center",
+                      px: 1,
+                    }}
+                  >
+                    Папка
+                  </Button>
+                </Box>
 
                 <IconButton
                   size="small"
@@ -1420,6 +1701,18 @@ function App() {
               >
                 Відкрити папку
               </Button>
+
+              <IconButton
+                color={alwaysOnTop ? "primary" : "default"}
+                onClick={toggleAlwaysOnTop}
+                title={
+                  alwaysOnTop
+                    ? "Вікно закріплено поверх інших"
+                    : "Закріпити вікно поверх інших"
+                }
+              >
+                <PushPinIcon />
+              </IconButton>
 
               <IconButton onClick={() => setDarkMode((v) => !v)}>
                 {darkMode ? <LightModeIcon /> : <DarkModeIcon />}
@@ -1829,14 +2122,76 @@ function App() {
         }
       >
         <MenuItem onClick={handleTreeContextAction}>
-          {treeContextMenu?.node.type === "file"
-            ? "Перечитати файл"
-            : "Створити файл у цій папці"}
+          {treeContextMenu?.node.type === "file" ? (
+            <>
+              <RefreshIcon fontSize="small" sx={{ mr: 1.5 }} />
+              Перечитати файл
+            </>
+          ) : (
+            <>
+              <AddIcon fontSize="small" sx={{ mr: 1.5 }} />
+              Створити файл у цій папці
+            </>
+          )}
         </MenuItem>
 
+        {treeContextMenu?.node.type === "folder" && (
+          <MenuItem
+            onClick={() => {
+              if (treeContextMenu?.node.type === "folder") {
+                openCreateFolderDialog(treeContextMenu.node.path);
+              }
+            }}
+          >
+            <CreateNewFolderIcon fontSize="small" sx={{ mr: 1.5 }} />
+            Створити папку в цій папці
+          </MenuItem>
+        )}
+
+        {treeContextMenu?.node.type === "folder" && (
+          <MenuItem
+            onClick={() => {
+              if (treeContextMenu?.node.type === "folder") {
+                openRenameDialog(treeContextMenu.node);
+              }
+            }}
+          >
+            <DriveFileRenameOutlineIcon fontSize="small" sx={{ mr: 1.5 }} />
+            Перейменувати папку
+          </MenuItem>
+        )}
+
+        {treeContextMenu?.node.type === "folder" && (
+          <MenuItem
+            onClick={() => {
+              if (treeContextMenu?.node.type === "folder") {
+                openDeleteFolderDialog(treeContextMenu.node);
+              }
+            }}
+            sx={{ color: "error.main" }}
+          >
+            <DeleteIcon fontSize="small" sx={{ mr: 1.5 }} />
+            Видалити папку
+          </MenuItem>
+        )}
+
         <MenuItem onClick={handleRevealTreeNode}>
+          <OpenInNewIcon fontSize="small" sx={{ mr: 1.5 }} />
           Показати у провіднику
         </MenuItem>
+
+        {treeContextMenu?.node.type === "file" && (
+          <MenuItem
+            onClick={() => {
+              if (treeContextMenu?.node.type === "file") {
+                openRenameDialog(treeContextMenu.node);
+              }
+            }}
+          >
+            <DriveFileRenameOutlineIcon fontSize="small" sx={{ mr: 1.5 }} />
+            Перейменувати файл
+          </MenuItem>
+        )}
 
         {treeContextMenu?.node.type === "file" && (
           <MenuItem
@@ -1847,6 +2202,7 @@ function App() {
             }}
             sx={{ color: "error.main" }}
           >
+            <DeleteIcon fontSize="small" sx={{ mr: 1.5 }} />
             Видалити файл
           </MenuItem>
         )}
@@ -1854,10 +2210,12 @@ function App() {
         <Divider />
 
         <MenuItem onClick={collapseAllFolders}>
+          <UnfoldLessIcon fontSize="small" sx={{ mr: 1.5 }} />
           Згорнути все
         </MenuItem>
 
         <MenuItem onClick={expandAllFolders}>
+          <UnfoldMoreIcon fontSize="small" sx={{ mr: 1.5 }} />
           Розгорнути все
         </MenuItem>
 
@@ -1875,6 +2233,7 @@ function App() {
               closeTreeContextMenu();
             }}
           >
+            <DescriptionIcon fontSize="small" sx={{ mr: 1.5 }} />
             Відкрити файл
           </MenuItem>,
         ]}
@@ -1918,6 +2277,50 @@ function App() {
             variant="contained"
             disabled={!newFileName.trim()}
             onClick={handleCreateFile}
+          >
+            Створити
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={createFolderDialogOpen}
+        onClose={() => setCreateFolderDialogOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Створити нову папку</DialogTitle>
+
+        <DialogContent sx={{ pt: 1 }}>
+          <TextField
+            autoFocus
+            fullWidth
+            label="Назва папки"
+            placeholder="Наприклад: linux"
+            value={newFolderName}
+            onChange={(event) => setNewFolderName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && newFolderName.trim()) {
+                handleCreateFolder();
+              }
+            }}
+            sx={{ mt: 1 }}
+          />
+
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1.5 }}>
+            Папку буде створено {newFolderParentRelativePath ? `у папці ${newFolderParentRelativePath}` : "у вибраній папці"}.
+          </Typography>
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={() => setCreateFolderDialogOpen(false)}>
+            Скасувати
+          </Button>
+
+          <Button
+            variant="contained"
+            disabled={!newFolderName.trim()}
+            onClick={handleCreateFolder}
           >
             Створити
           </Button>
@@ -2004,6 +2407,85 @@ function App() {
             onClick={deleteSelectedFile}
           >
             Видалити
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deleteFolderDialogOpen} onClose={closeDeleteFolderDialog}>
+        <DialogTitle>Видалити папку?</DialogTitle>
+
+        <DialogContent>
+          <Typography sx={{ mb: 1 }}>
+            Папку буде видалено з диска разом з усіма файлами всередині:
+          </Typography>
+
+          <Typography
+            color="error"
+            sx={{
+              fontFamily: "Consolas, monospace",
+              wordBreak: "break-all",
+            }}
+          >
+            {folderToDelete?.path}
+          </Typography>
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={closeDeleteFolderDialog}>
+            Скасувати
+          </Button>
+
+          <Button
+            color="error"
+            variant="contained"
+            onClick={deleteSelectedFolder}
+          >
+            Видалити
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={renameDialogOpen}
+        onClose={closeRenameDialog}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>
+          {nodeToRename?.type === "file" ? "Перейменувати файл" : "Перейменувати папку"}
+        </DialogTitle>
+
+        <DialogContent sx={{ pt: 1 }}>
+          <TextField
+            autoFocus
+            fullWidth
+            label="Нова назва"
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && renameValue.trim()) {
+                renameSelectedNode();
+              }
+            }}
+            sx={{ mt: 1 }}
+          />
+
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1.5 }}>
+            Поточна назва: {nodeToRename?.name}
+          </Typography>
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={closeRenameDialog}>
+            Скасувати
+          </Button>
+
+          <Button
+            variant="contained"
+            disabled={!renameValue.trim()}
+            onClick={renameSelectedNode}
+          >
+            Перейменувати
           </Button>
         </DialogActions>
       </Dialog>
