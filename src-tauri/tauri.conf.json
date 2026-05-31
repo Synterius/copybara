@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "Copybara",
-        "width": 800,
-        "height": 600,
+        "width": 1000,
+        "height": 700,
+        "minWidth": 870,
+        "minHeight": 560,
         "visible": false,
         "backgroundColor": "#1e1e1e",
         "dragDropEnabled": false
