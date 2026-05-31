@@ -74,6 +74,12 @@ export default function InstructionCard({
   onDrop,
 }: InstructionCardProps) {
   const isEditing = editingIndex === index;
+  const editCommandLineCount = editCommand.split(/\r\n|\r|\n/).length;
+
+  const editCommandRows = Math.min(
+    10,
+    Math.max(4, editCommandLineCount)
+  );
 
   return (
     <Card
@@ -171,20 +177,70 @@ export default function InstructionCard({
           </IconButton>
 
           {isEditing ? (
-            <TextField
-              fullWidth
-              multiline
-              minRows={4}
-              label="Текст для копіювання"
-              value={editCommand}
-              onChange={(event) => onEditCommandChange(event.target.value)}
+            <Box
               sx={{
-                "& textarea": {
-                  fontFamily: "Consolas, monospace",
-                  whiteSpace: "pre",
+                width: "100%",
+                minWidth: 0,
+                border: "2px solid",
+                borderColor: "primary.main",
+                borderRadius: 1.5,
+                overflow: "hidden",
+                bgcolor: "transparent",
+                p: 0.75,
+                "&:focus-within": {
+                  boxShadow: "0 0 0 1px rgba(242, 140, 40, 0.25)",
                 },
               }}
-            />
+            >
+              <Box
+                component="textarea"
+                rows={editCommandRows}
+                value={editCommand}
+                onChange={(event) => onEditCommandChange(event.target.value)}
+                wrap="off"
+                spellCheck={false}
+                sx={{
+                  width: "100%",
+                  minWidth: 0,
+                  resize: "none",
+                  display: "block",
+                  boxSizing: "border-box",
+
+                  px: 1,
+                  py: 0.75,
+
+                  border: "none",
+                  outline: "none",
+                  bgcolor: "transparent",
+                  color: "text.primary",
+
+                  fontFamily: "Consolas, monospace",
+                  fontSize: "0.92rem",
+                  lineHeight: 1.5,
+
+                  whiteSpace: "pre",
+                  overflowX: "auto",
+                  overflowY: editCommandLineCount > 10 ? "auto" : "hidden",
+
+                  scrollbarWidth: "thin",
+
+                  "&::-webkit-scrollbar": {
+                    width: "10px",
+                    height: "10px",
+                  },
+                  "&::-webkit-scrollbar-track": {
+                    background: "transparent",
+                  },
+                  "&::-webkit-scrollbar-thumb": {
+                    backgroundColor: "text.disabled",
+                    borderRadius: "10px",
+                  },
+                  "&::-webkit-scrollbar-corner": {
+                    background: "transparent",
+                  },
+                }}
+              />
+            </Box>
           ) : (
             <Typography
               component="pre"
