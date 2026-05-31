@@ -138,7 +138,9 @@ function App() {
   const [appVersion, setAppVersion] = useState("");
   const [darkMode, setDarkMode] = useState(true);
 
-  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(
+    localStorage.getItem("copybara.selectedFileName")
+  );
   const [workspacePath, setWorkspacePath] = useState<string | null>(
     localStorage.getItem("copybara.workspacePath")
   );
@@ -685,14 +687,20 @@ function App() {
       setWorkspaceFiles(files);
       setWorkspaceContents(Object.fromEntries(contentsEntries));
 
+      const savedSelectedFile = localStorage.getItem("copybara.selectedFileName");
       const firstFile = files[0];
 
       if (firstFile) {
-        setSelectedFileName((current) =>
-          current && files.includes(current) ? current : firstFile
-        );
+        const nextSelectedFile =
+          savedSelectedFile && files.includes(savedSelectedFile)
+            ? savedSelectedFile
+            : firstFile;
+
+        setSelectedFileName(nextSelectedFile);
+        localStorage.setItem("copybara.selectedFileName", nextSelectedFile);
       } else {
         setSelectedFileName("");
+        localStorage.removeItem("copybara.selectedFileName");
       }
 
       setSearchText("");
@@ -1076,6 +1084,7 @@ function App() {
           selected={node.path === selectedFileName}
           onClick={() => {
             setSelectedFileName(node.path);
+            localStorage.setItem("copybara.selectedFileName", node.path);
             setSearchText("");
             setLastCopiedIndex(null);
           }}
@@ -1117,14 +1126,16 @@ function App() {
       return;
     }
 
-    const trimmedName = newFileName.trim();
+    const validationError = validateNewFileName(newFileName);
 
-    if (!trimmedName) {
-      showSnackbar("Вкажіть назву файлу");
+    if (validationError) {
+      showSnackbar(validationError);
       return;
     }
 
-    const safeFileName = trimmedName.endsWith(".txt")
+    const trimmedName = newFileName.trim();
+
+    const safeFileName = trimmedName.toLowerCase().endsWith(".txt")
       ? trimmedName
       : `${trimmedName}.txt`;
 
@@ -1154,6 +1165,54 @@ function App() {
     }
   };
 
+  const validateNodeName = (rawName: string): string | null => {
+    const name = rawName.trim();
+
+    if (!name) {
+      return "Вкажіть назву";
+    }
+
+    if (name === "." || name === "..") {
+      return "Некоректна назва";
+    }
+
+    if (name.includes("/") || name.includes("\\")) {
+      return "Назва не повинна містити шлях або вкладені папки";
+    }
+
+    if (name.includes("..")) {
+      return "Назва не повинна містити '..'";
+    }
+
+    const forbiddenChars = /[<>:"|?*]/;
+
+    if (forbiddenChars.test(name)) {
+      return "Назва містить заборонені символи";
+    }
+
+    return null;
+  };
+
+  const validateNewFileName = (rawName: string): string | null => {
+    const baseError = validateNodeName(rawName);
+
+    if (baseError) {
+      return baseError;
+    }
+
+    const name = rawName.trim();
+
+    const nameWithoutExtension = name.toLowerCase().endsWith(".txt")
+      ? name.slice(0, -4).trim()
+      : name;
+
+    if (!nameWithoutExtension) {
+      return "Назва файлу не може складатися лише з .txt";
+    }
+
+    return null;
+  };
+
   const openCreateFolderDialog = (parentRelativePath = "") => {
     if (!workspacePath) {
       showSnackbar("Спочатку виберіть папку для роботи");
@@ -1177,17 +1236,14 @@ function App() {
       return;
     }
 
+    const validationError = validateNodeName(newFolderName);
+
+    if (validationError) {
+      showSnackbar(validationError);
+      return;
+    }
+
     const trimmedName = newFolderName.trim();
-
-    if (!trimmedName) {
-      showSnackbar("Вкажіть назву папки");
-      return;
-    }
-
-    if (trimmedName.includes("/") || trimmedName.includes("\\")) {
-      showSnackbar("Назва папки не повинна містити / або \\");
-      return;
-    }
 
     const fullPath = buildFilePath(newFolderParentPath, trimmedName);
     const initialFilePath = buildFilePath(fullPath, `${trimmedName}.txt`);
@@ -1291,6 +1347,16 @@ function App() {
   const renameSelectedNode = async () => {
     if (!workspacePath || !nodeToRename) {
       closeRenameDialog();
+      return;
+    }
+
+    const validationError =
+      nodeToRename.type === "file"
+        ? validateNewFileName(renameValue)
+        : validateNodeName(renameValue);
+
+    if (validationError) {
+      showSnackbar(validationError);
       return;
     }
 

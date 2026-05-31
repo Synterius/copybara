@@ -10,7 +10,7 @@
   ],
   "permissions": [
     "window-state:default",
-    "updater:default",
-    "process:default"
+    "updater:allow-check",
+    "updater:allow-download-and-install"
   ]
 }
