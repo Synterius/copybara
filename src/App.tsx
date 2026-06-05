@@ -141,6 +141,9 @@ function App() {
     createReplacementRule(0),
   ]);
   const [replacementDialogOpen, setReplacementDialogOpen] = useState(false);
+  const [applyReplacementDialogOpen, setApplyReplacementDialogOpen] = useState(false);
+  const [replacementRuleToApply, setReplacementRuleToApply] = useState<ReplacementRule | null>(null);
+  const [replacementApplyCount, setReplacementApplyCount] = useState(0);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [lastCopiedIndex, setLastCopiedIndex] = useState<number | null>(null);
@@ -442,6 +445,43 @@ function App() {
         return;
       }
 
+      const isReplacementRulesShortcut =
+        isCtrl &&
+        event.shiftKey &&
+        !event.altKey &&
+        event.code === "KeyR";
+
+      if (isReplacementRulesShortcut) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        if (!workspacePath || !selectedFileName) {
+          showSnackbar("Спочатку виберіть файл для роботи");
+          return;
+        }
+
+        const selectedText = window.getSelection()?.toString().trim() ?? "";
+
+        setReplacementVisible(true);
+
+        if (selectedText) {
+          setReplacementRules((rules) => [
+            ...rules,
+            {
+              ...createReplacementRule(rules.length),
+              from: selectedText,
+            },
+          ]);
+
+          showSnackbar("Правило заміни додано");
+          return;
+        }
+
+        setReplacementDialogOpen(true);
+        return;
+      }
+
       const isReplaceShortcut =
         isCtrl &&
         !event.shiftKey &&
@@ -678,6 +718,98 @@ function App() {
     );
   };
 
+  const countTextOccurrences = (text: string, searchValue: string) => {
+    if (!searchValue) {
+      return 0;
+    }
+
+    return text.split(searchValue).length - 1;
+  };
+
+  const removeReplacementRuleAfterApply = (ruleId: string) => {
+    setReplacementRules((current) => {
+      const remainingRules = current.filter((rule) => rule.id !== ruleId);
+
+      if (remainingRules.length === 0) {
+        return [
+          {
+            ...createReplacementRule(0),
+            color: primaryReplacementColor,
+          },
+        ];
+      }
+
+      return remainingRules.map((rule, index) => ({
+        ...rule,
+        id: createReplacementRule(index).id,
+        color: createReplacementRule(index).color,
+      }));
+    });
+  };
+
+  const openApplyReplacementDialog = (rule: ReplacementRule) => {
+    if (!workspacePath || !selectedFileName) {
+      showSnackbar("Спочатку виберіть файл для роботи");
+      return;
+    }
+
+    if (!rule.from) {
+      showSnackbar("Вкажіть текст для заміни");
+      return;
+    }
+
+    const currentContent = workspaceContents[selectedFileName] ?? "";
+    const replacementsCount = countTextOccurrences(currentContent, rule.from);
+
+    if (replacementsCount === 0) {
+      showSnackbar("У файлі немає збігів для цього правила");
+      return;
+    }
+
+    setReplacementRuleToApply(rule);
+    setReplacementApplyCount(replacementsCount);
+    setApplyReplacementDialogOpen(true);
+  };
+
+  const closeApplyReplacementDialog = () => {
+    setApplyReplacementDialogOpen(false);
+    setReplacementRuleToApply(null);
+    setReplacementApplyCount(0);
+  };
+
+  const applyReplacementRuleToCurrentFile = async () => {
+    if (!workspacePath || !selectedFileName || !replacementRuleToApply?.from) {
+      closeApplyReplacementDialog();
+      return;
+    }
+
+    const currentContent = workspaceContents[selectedFileName] ?? "";
+    const nextContent = currentContent
+      .split(replacementRuleToApply.from)
+      .join(replacementRuleToApply.to);
+
+    try {
+      await writeTextFile(buildFilePath(workspacePath, selectedFileName), nextContent);
+
+      setWorkspaceContents((current) => ({
+        ...current,
+        [selectedFileName]: nextContent,
+      }));
+
+      removeReplacementRuleAfterApply(replacementRuleToApply.id);
+      setSearchText("");
+      setLastCopiedIndex(null);
+      cancelEditingInstruction();
+
+      showSnackbar(`Застосовано замін: ${replacementApplyCount}`);
+    } catch (error) {
+      console.error(error);
+      showSnackbar("Не вдалося застосувати заміну");
+    } finally {
+      closeApplyReplacementDialog();
+    }
+  };
+
   const clearReplacementRules = () => {
     setReplacementRules((current) => [
       {
@@ -707,7 +839,11 @@ function App() {
   };
 
   const applyReplacement = (text: string) => {
-    return applyReplacementRules(text, activeReplacementRules);
+    const rulesWithReplacementValue = activeReplacementRules.filter(
+      (rule) => rule.to.length > 0
+    );
+
+    return applyReplacementRules(text, rulesWithReplacementValue);
   };
 
   const openWorkspaceFolder = async () => {
@@ -1594,6 +1730,7 @@ function App() {
                     updateReplacementRule(firstReplacementRule.id, "to", value)
                   }
                   onClearReplacement={clearReplacementRules}
+                  onApplyReplacement={() => openApplyReplacementDialog(firstReplacementRule)}
                   onOpenReplacementRulesDialog={() => setReplacementDialogOpen(true)}
                   onShowInTree={showCurrentFileInTree}
                 />
@@ -1786,6 +1923,20 @@ function App() {
         onConfirm={deleteInstructionFromCurrentFile}
       />
 
+      <ConfirmDialog
+        open={applyReplacementDialogOpen}
+        title="Застосувати заміну?"
+        message={`У файлі буде виконано замін: ${replacementApplyCount}. Після застосування це правило буде видалено.`}
+        details={
+          replacementRuleToApply
+            ? `${replacementRuleToApply.from} → ${replacementRuleToApply.to || "(порожньо)"}`
+            : undefined
+        }
+        confirmText="Застосувати"
+        onClose={closeApplyReplacementDialog}
+        onConfirm={applyReplacementRuleToCurrentFile}
+      />
+
       <UpdateDialog
         open={updateDialogOpen}
         title={updateDialogTitle}
@@ -1803,6 +1954,7 @@ function App() {
         onAddRule={addReplacementRule}
         onDeleteRule={deleteReplacementRule}
         onUpdateRule={updateReplacementRule}
+        onApplyRule={openApplyReplacementDialog}
       />
 
       <Snackbar

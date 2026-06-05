@@ -2,6 +2,7 @@ import { Box, IconButton, TextField } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import ClearIcon from "@mui/icons-material/Clear";
 import TuneIcon from "@mui/icons-material/Tune";
+import DoneAllIcon from "@mui/icons-material/DoneAll";
 
 type ReplacementPanelProps = {
     replaceFrom: string;
@@ -11,6 +12,7 @@ type ReplacementPanelProps = {
     onReplaceToChange: (value: string) => void;
     onClear: () => void;
     onOpenRulesDialog: () => void;
+    onApply: () => void;
 };
 
 export default function ReplacementPanel({
@@ -21,6 +23,7 @@ export default function ReplacementPanel({
     onReplaceToChange,
     onClear,
     onOpenRulesDialog,
+    onApply,
 }: ReplacementPanelProps) {
     return (
         <Box
@@ -74,6 +77,14 @@ export default function ReplacementPanel({
                 value={replaceTo}
                 onChange={(event) => onReplaceToChange(event.target.value)}
             />
+
+            <IconButton
+                onClick={onApply}
+                title="Застосувати заміну до файлу"
+                disabled={!replaceFrom}
+            >
+                <DoneAllIcon />
+            </IconButton>
 
             <IconButton
                 onClick={onClear}

@@ -11,6 +11,7 @@ import {
 
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
+import DoneAllIcon from "@mui/icons-material/DoneAll";
 
 import type { ReplacementRule } from "../types/replacement";
 
@@ -25,6 +26,7 @@ type ReplacementRulesDialogProps = {
     field: "from" | "to",
     value: string
   ) => void;
+  onApplyRule: (rule: ReplacementRule) => void;
 };
 
 export default function ReplacementRulesDialog({
@@ -34,6 +36,7 @@ export default function ReplacementRulesDialog({
   onAddRule,
   onDeleteRule,
   onUpdateRule,
+  onApplyRule,
 }: ReplacementRulesDialogProps) {
   return (
     <Dialog
@@ -51,8 +54,8 @@ export default function ReplacementRulesDialog({
               key={rule.id}
               sx={{
                 display: "grid",
-                gridTemplateColumns: "18px 1fr 1fr auto",
-                gap: 1.5,
+                gridTemplateColumns: "18px minmax(120px, 1fr) minmax(120px, 1fr) auto auto",
+                gap: 1,
                 alignItems: "center",
               }}
             >
@@ -86,6 +89,14 @@ export default function ReplacementRulesDialog({
                   onUpdateRule(rule.id, "to", event.target.value)
                 }
               />
+
+              <IconButton
+                onClick={() => onApplyRule(rule)}
+                title="Застосувати це правило до файлу"
+                disabled={!rule.from}
+              >
+                <DoneAllIcon />
+              </IconButton>
 
               <IconButton
                 color="error"

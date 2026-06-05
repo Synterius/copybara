@@ -35,6 +35,7 @@ type CurrentFileHeaderProps = {
   onReplaceToChange: (value: string) => void;
   onClearReplacement: () => void;
   onOpenReplacementRulesDialog: () => void;
+  onApplyReplacement: () => void;
 };
 
 export default function CurrentFileHeader({
@@ -56,6 +57,7 @@ export default function CurrentFileHeader({
   onReplaceToChange,
   onClearReplacement,
   onOpenReplacementRulesDialog,
+  onApplyReplacement,
 }: CurrentFileHeaderProps) {
   return (
     <Box
@@ -155,6 +157,7 @@ export default function CurrentFileHeader({
           rulesCount={replacementRulesCount}
           onReplaceFromChange={onReplaceFromChange}
           onReplaceToChange={onReplaceToChange}
+          onApply={onApplyReplacement}
           onClear={onClearReplacement}
           onOpenRulesDialog={onOpenReplacementRulesDialog}
         />
