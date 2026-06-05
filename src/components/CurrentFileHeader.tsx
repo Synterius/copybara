@@ -8,6 +8,7 @@ import AddIcon from "@mui/icons-material/Add";
 import BrandingWatermarkIcon from "@mui/icons-material/BrandingWatermark";
 import FindReplaceIcon from "@mui/icons-material/FindReplace";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
 
 import ReplacementPanel from "./ReplacementPanel";
 
@@ -26,6 +27,7 @@ type CurrentFileHeaderProps = {
 
   onAddCommand: () => void;
   onReloadCurrentFile: () => void;
+  onShowInTree: () => void;
   onToggleReplacementVisible: () => void;
   onToggleMinimizeAfterCopy: () => void;
 
@@ -47,6 +49,7 @@ export default function CurrentFileHeader({
   replacementRulesCount,
   onAddCommand,
   onReloadCurrentFile,
+  onShowInTree,
   onToggleReplacementVisible,
   onToggleMinimizeAfterCopy,
   onReplaceFromChange,
@@ -73,9 +76,31 @@ export default function CurrentFileHeader({
             {selectedFileName}
           </Typography>
 
-          <Typography variant="caption" color="text.secondary">
-            {workspacePath ?? "Папку ще не вибрано"}
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+            >
+              {workspacePath ?? "Папку ще не вибрано"}
+            </Typography>
+
+            <IconButton
+              size="small"
+              color="primary"
+              onClick={onShowInTree}
+              title="Показати в дереві"
+              disabled={!workspacePath || !selectedFileName}
+              sx={{ p: 0.25 }}
+            >
+              <AccountTreeIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Box>
 
           <Typography variant="body2" color="text.secondary">
             Команд: {filteredInstructionsCount} / {instructionsCount}

@@ -19,6 +19,7 @@ type WorkspaceTreeProps = {
   selectedFileName: string | null;
   collapsedFolderPaths: Set<string>;
   workspaceContents: Record<string, string>;
+  treeSearchText: string;
   onToggleFolder: (folderPath: string) => void;
   onSelectFile: (filePath: string) => void;
   onOpenContextMenu: (
@@ -32,14 +33,59 @@ export default function WorkspaceTree({
   selectedFileName,
   collapsedFolderPaths,
   workspaceContents,
+  treeSearchText,
   onToggleFolder,
   onSelectFile,
   onOpenContextMenu,
 }: WorkspaceTreeProps) {
+  const normalizedTreeSearchText = treeSearchText.trim().toLowerCase();
+  const isTreeSearchActive = normalizedTreeSearchText.length > 0;
+
+  const nodeMatchesSearch = (node: WorkspaceNode) => {
+    return (
+      node.name.toLowerCase().includes(normalizedTreeSearchText) ||
+      node.path.toLowerCase().includes(normalizedTreeSearchText)
+    );
+  };
+
+  const filterNodesBySearch = (items: WorkspaceNode[]): WorkspaceNode[] => {
+    if (!isTreeSearchActive) {
+      return items;
+    }
+
+    return items
+      .map((node) => {
+        if (node.type === "file") {
+          return nodeMatchesSearch(node) ? node : null;
+        }
+
+        const filteredChildren = node.children
+          ? filterNodesBySearch(node.children)
+          : [];
+
+        if (nodeMatchesSearch(node)) {
+          return node;
+        }
+
+        if (filteredChildren.length > 0) {
+          return {
+            ...node,
+            children: filteredChildren,
+          };
+        }
+
+        return null;
+      })
+      .filter((node): node is WorkspaceNode => node !== null);
+  };
+
+  const visibleNodes = filterNodesBySearch(nodes);
+
   const renderNodes = (items: WorkspaceNode[], level = 0) =>
     items.map((node) => {
       if (node.type === "folder") {
-        const isCollapsed = collapsedFolderPaths.has(node.path);
+        const isCollapsed =
+          !isTreeSearchActive && collapsedFolderPaths.has(node.path);
 
         return (
           <Box key={`folder-${node.path}`}>
@@ -80,6 +126,7 @@ export default function WorkspaceTree({
       return (
         <ListItemButton
           key={`file-${node.path}`}
+          data-copybara-file-path={node.path}
           selected={node.path === selectedFileName}
           onClick={() => onSelectFile(node.path)}
           onContextMenu={(event) => onOpenContextMenu(event, node)}
@@ -89,13 +136,12 @@ export default function WorkspaceTree({
 
           <ListItemText
             primary={node.name}
-            secondary={`${
-              parseInstructions(workspaceContents[node.path] ?? "").length
-            } команд`}
+            secondary={`${parseInstructions(workspaceContents[node.path] ?? "").length
+              } команд`}
           />
         </ListItemButton>
       );
     });
 
-  return <>{renderNodes(nodes)}</>;
+  return <>{renderNodes(visibleNodes)}</>;
 }

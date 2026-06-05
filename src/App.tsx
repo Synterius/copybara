@@ -78,9 +78,9 @@ import ReplacementHighlightedCommand from "./components/ReplacementHighlightedCo
 import WorkspaceStateView from "./components/WorkspaceStateView";
 // ===  === //
 
-const defaultDrawerWidth = 280;
-const minDrawerWidth = 248;
-const hiddenDrawerThreshold = 248;
+const defaultDrawerWidth = 290;
+const minDrawerWidth = 280;
+const hiddenDrawerThreshold = 280;
 
 function App() {
   const [appVersion, setAppVersion] = useState("");
@@ -134,6 +134,8 @@ function App() {
   const [dragOverInstructionIndex, setDragOverInstructionIndex] = useState<number | null>(null);
 
   const [searchText, setSearchText] = useState("");
+  const [treeSearchText, setTreeSearchText] = useState("");
+  const [treeSearchVisible, setTreeSearchVisible] = useState(false);
   const [replacementVisible, setReplacementVisible] = useState(false);
   const [replacementRules, setReplacementRules] = useState<ReplacementRule[]>(() => [
     createReplacementRule(0),
@@ -185,6 +187,7 @@ function App() {
   const [newFolderParentPath, setNewFolderParentPath] = useState<string | null>(null);
   const [newFolderParentRelativePath, setNewFolderParentRelativePath] = useState("");
 
+  const activeTreeSearchText = treeSearchVisible ? treeSearchText : "";
   const instructions = selectedFileName
     ? parseInstructions(workspaceContents[selectedFileName] ?? "")
     : [];
@@ -785,14 +788,15 @@ function App() {
     if (!command.trim()) return;
 
     const currentContent = workspaceContents[selectedFileName] ?? "";
+    const currentInstructions = parseInstructions(currentContent);
 
-    const newBlock = description
-      ? `// ${description}\n${command}`
-      : command;
-
-    const nextContent = currentContent.trimEnd()
-      ? `${currentContent.trimEnd()}\n\n${newBlock}\n`
-      : `${newBlock}\n`;
+    const nextContent = serializeInstructions([
+      ...currentInstructions,
+      {
+        description,
+        command,
+      },
+    ]);
 
     const selectedFilePath = buildFilePath(workspacePath, selectedFileName);
 
@@ -1307,6 +1311,58 @@ function App() {
     });
   };
 
+  const showCurrentFileInTree = () => {
+    if (!selectedFileName) {
+      return;
+    }
+
+    setTreePanelHidden(false);
+
+    const parentFolderPath = selectedFileName.includes("/")
+      ? selectedFileName.split("/").slice(0, -1).join("/")
+      : "";
+
+    if (parentFolderPath) {
+      const pathsToOpen = new Set([
+        ...getFolderAncestorPaths(parentFolderPath),
+        parentFolderPath,
+      ]);
+
+      setCollapsedFolderPaths((current) => {
+        const next = new Set(current);
+
+        for (const path of pathsToOpen) {
+          next.delete(path);
+        }
+
+        localStorage.setItem(
+          "copybara.collapsedFolderPaths",
+          JSON.stringify(Array.from(next))
+        );
+
+        return next;
+      });
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const fileElement = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-copybara-file-path]")
+        ).find(
+          (element) =>
+            element.getAttribute("data-copybara-file-path") === selectedFileName
+        );
+
+        fileElement?.scrollIntoView({
+          block: "center",
+          behavior: "smooth",
+        });
+      });
+    });
+
+    showSnackbar("Файл показано в дереві");
+  };
+
   const activateFolder = (folderPath: string) => {
     const allFolderPaths = getAllFolderPaths(workspaceTree);
     const pathsToKeepOpen = new Set([
@@ -1408,6 +1464,12 @@ function App() {
               onCreateFile={() => openCreateFileDialog()}
               onCreateFolder={() => openCreateFolderDialog()}
               onReloadWorkspaceDirectory={reloadWorkspaceDirectory}
+              treeSearchText={treeSearchText}
+              treeSearchVisible={treeSearchVisible}
+              onTreeSearchTextChange={setTreeSearchText}
+              onToggleTreeSearchVisible={() =>
+                setTreeSearchVisible((current) => !current)
+              }
             />
 
             <List onContextMenu={(event) => event.preventDefault()}>
@@ -1425,6 +1487,7 @@ function App() {
                     setLastCopiedIndex(null);
                   }}
                   onOpenContextMenu={openTreeContextMenu}
+                  treeSearchText={activeTreeSearchText}
                 />
               ) : (
                 <Box sx={{ px: 2, py: 3 }}>
@@ -1532,6 +1595,7 @@ function App() {
                   }
                   onClearReplacement={clearReplacementRules}
                   onOpenReplacementRulesDialog={() => setReplacementDialogOpen(true)}
+                  onShowInTree={showCurrentFileInTree}
                 />
 
                 {filteredInstructions.length === 0 && (

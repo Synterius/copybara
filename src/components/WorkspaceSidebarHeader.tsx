@@ -1,9 +1,12 @@
+import { useEffect, useRef } from "react";
+
 import {
   Badge,
   Box,
   Button,
   Divider,
   IconButton,
+  TextField,
   Typography,
 } from "@mui/material";
 
@@ -13,28 +16,50 @@ import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import TerminalIcon from "@mui/icons-material/Terminal";
+import SearchIcon from "@mui/icons-material/Search";
+import ClearIcon from "@mui/icons-material/Clear";
 
 type WorkspaceSidebarHeaderProps = {
   appVersion: string;
   workspacePath: string | null;
   availableUpdateVersion: string | null;
+  treeSearchText: string;
+  treeSearchVisible: boolean;
   onHideTreePanel: () => void;
   onCheckForUpdates: () => void;
   onCreateFile: () => void;
   onCreateFolder: () => void;
   onReloadWorkspaceDirectory: () => void;
+  onTreeSearchTextChange: (value: string) => void;
+  onToggleTreeSearchVisible: () => void;
 };
 
 export default function WorkspaceSidebarHeader({
   appVersion,
   workspacePath,
   availableUpdateVersion,
+  treeSearchText,
+  treeSearchVisible,
   onHideTreePanel,
   onCheckForUpdates,
   onCreateFile,
   onCreateFolder,
   onReloadWorkspaceDirectory,
+  onTreeSearchTextChange,
+  onToggleTreeSearchVisible,
 }: WorkspaceSidebarHeaderProps) {
+  const treeSearchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!treeSearchVisible) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      treeSearchInputRef.current?.focus();
+    });
+  }, [treeSearchVisible]);
+
   return (
     <Box
       sx={{
@@ -49,7 +74,14 @@ export default function WorkspaceSidebarHeader({
       }}
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexGrow: 1 }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            flexShrink: 0,
+          }}
+        >
           <Box
             sx={{
               width: 28,
@@ -173,7 +205,50 @@ export default function WorkspaceSidebarHeader({
         >
           <RefreshIcon fontSize="small" />
         </IconButton>
+
+        <IconButton
+          size="small"
+          color={treeSearchVisible ? "primary" : "default"}
+          onClick={onToggleTreeSearchVisible}
+          disabled={!workspacePath}
+          title={treeSearchVisible ? "Сховати пошук" : "Пошук у дереві"}
+        >
+          <SearchIcon fontSize="small" />
+        </IconButton>
       </Box>
+
+      {treeSearchVisible && (
+        <TextField
+          size="small"
+          fullWidth
+          value={treeSearchText}
+          onChange={(event) => onTreeSearchTextChange(event.target.value)}
+          placeholder="Пошук у дереві..."
+          disabled={!workspacePath}
+          sx={{ mt: 1.25 }}
+          inputRef={treeSearchInputRef}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <SearchIcon
+                  fontSize="small"
+                  sx={{ mr: 0.75, color: "text.secondary" }}
+                />
+              ),
+              endAdornment: treeSearchText ? (
+                <IconButton
+                  size="small"
+                  onClick={() => onTreeSearchTextChange("")}
+                  title="Очистити пошук"
+                  sx={{ p: 0.25 }}
+                >
+                  <ClearIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              ) : null,
+            },
+          }}
+        />
+      )}
     </Box>
   );
 }

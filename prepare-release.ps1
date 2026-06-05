@@ -36,9 +36,9 @@ $windowsSignature = (Get-Content $windowsSigPath -Raw).Trim()
 # -----------------------------
 # Pull Linux DEB artifact from Ubuntu VM
 # -----------------------------
-$UbuntuUser = "copybara"
-$UbuntuHost = "192.168.91.128"
-$UbuntuDebDir = "~/Projects/copybara/src-tauri/target/release/bundle/deb"
+$LinuxUser = "copybara"
+$LinuxHost = "192.168.91.129"
+$LinuxDebDir = "~/Projects/copybara/src-tauri/target/release/bundle/deb"
 $SshKeyPath = "$env:USERPROFILE\.ssh\copybara_release_ed25519"
 
 $linuxReleaseDir = ".\linux-release"
@@ -47,10 +47,10 @@ New-Item -ItemType Directory -Force $linuxReleaseDir | Out-Null
 $linuxDebName = "Copybara_${version}_amd64.deb"
 
 Write-Host ""
-Write-Host "Trying to pull Linux DEB from Ubuntu VM..."
+Write-Host "Trying to pull Linux DEB from Mint 21.3 VM..."
 
-scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuDebDir}/${linuxDebName}" "$linuxReleaseDir\"
-scp -i $SshKeyPath "${UbuntuUser}@${UbuntuHost}:${UbuntuDebDir}/${linuxDebName}.sig" "$linuxReleaseDir\"
+scp -i $SshKeyPath "${LinuxUser}@${LinuxHost}:${LinuxDebDir}/${linuxDebName}" "$linuxReleaseDir\"
+scp -i $SshKeyPath "${LinuxUser}@${LinuxHost}:${LinuxDebDir}/${linuxDebName}.sig" "$linuxReleaseDir\"
 
 # -----------------------------
 # Linux artifact (.deb)
